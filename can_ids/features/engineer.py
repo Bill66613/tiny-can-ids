@@ -17,7 +17,6 @@ All functions operate on a preprocessed DataFrame (output of
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -92,8 +91,9 @@ def extract_timing_features(
         2-D array of shape ``(n_windows, 4)``.
     """
     timestamps = df["Timestamp"].to_numpy(dtype=np.float64)
-    inter_arrival = np.diff(timestamps, prepend=timestamps[0])
-    inter_arrival = np.abs(inter_arrival)
+    inter_arrival = np.abs(np.diff(timestamps))
+    # Pad the first position so length matches the frame count
+    inter_arrival = np.concatenate([[inter_arrival[0] if len(inter_arrival) > 0 else 0.0], inter_arrival])
 
     n = len(df)
     n_windows = max(1, n // window_size)

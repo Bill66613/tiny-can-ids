@@ -52,7 +52,9 @@ def quantize_weights(
 
     qmax = 2 ** (bits - 1) - 1
     scale = float(max_val / qmax)
-    quantized = np.round(weights / scale).clip(-qmax, qmax).astype(np.int32)
+    # Use int8 for 8-bit (TFLite-compatible), int32 for wider bit-widths
+    dtype = np.int8 if bits == 8 else np.int32
+    quantized = np.round(weights / scale).clip(-qmax, qmax).astype(dtype)
     zero_point = 0
     logger.debug(
         "Quantized weights %s → int%d, scale=%.6f", weights.shape, bits, scale

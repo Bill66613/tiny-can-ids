@@ -166,7 +166,7 @@ def main() -> None:
             tflite_preds = run_tflite_inference(tflite_bytes, X_test_s)
             _report("TFLite (host validation)", tflite_preds, y_test)
 
-        except Exception as exc:
+        except (ImportError, RuntimeError, OSError) as exc:
             logger.warning("TFLite export/validation failed: %s", exc)
     else:
         logger.info("TFLite export skipped (--no-tflite)")

@@ -12,10 +12,8 @@ where Flag is 'R' for normal and 'T' (or 'attack type') for attacks.
 
 from __future__ import annotations
 
-import io
 import logging
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -137,8 +135,8 @@ def load_can_dataset(path: str | Path) -> pd.DataFrame:
         else:
             # Fall back to comma-separated
             df = pd.read_csv(path)
-            _validate_columns(df)
-    except Exception as exc:
+        _validate_columns(df)
+    except (pd.errors.ParserError, ValueError, KeyError, OSError) as exc:
         raise ValueError(f"Could not parse CAN dataset at {path}: {exc}") from exc
 
     logger.info("Loaded %d frames from %s", len(df), path)
