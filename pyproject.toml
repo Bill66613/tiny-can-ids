@@ -25,3 +25,6 @@ can-ids-pipeline = "scripts.run_pipeline:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+
+[tool.setuptools.packages.find]
+include = ["can_ids*"]

@@ -42,9 +42,7 @@ def train_logistic_regression(
     """
     model = LogisticRegression(C=C, max_iter=max_iter, **kwargs)
     model.fit(X_train, y_train)
-    logger.info(
-        "Logistic regression trained – coef shape: %s", model.coef_.shape
-    )
+    logger.info("Logistic regression trained – coef shape: %s", model.coef_.shape)
     return model
 
 
@@ -86,13 +84,21 @@ def train_decision_tree(
 class TinyNeuralNetwork:
     """A small fully-connected neural network for CAN intrusion detection.
 
-    Architecture: ``input → Dense(32, ReLU) → Dense(16, ReLU) → Dense(1, sigmoid)``
+    Architecture (binary)::
+
+        input → Dense(32, ReLU) → Dense(16, ReLU) → Dense(1, sigmoid)
+
+    Architecture (multi-class, *num_classes* > 2)::
+
+        input → Dense(32, ReLU) → Dense(16, ReLU) → Dense(num_classes, softmax)
 
     The model is intentionally tiny so that it can be quantized and deployed
     on microcontrollers with limited flash/RAM.
 
     Args:
         input_dim: Number of input features.
+        num_classes: Number of output classes.  Use 2 (default) for binary
+            classification (normal vs attack) or >2 for multi-class.
         hidden_units: Tuple of hidden layer sizes.
         learning_rate: Adam learning rate.
     """
@@ -100,14 +106,20 @@ class TinyNeuralNetwork:
     def __init__(
         self,
         input_dim: int,
+        num_classes: int = 2,
         hidden_units: tuple[int, ...] = (32, 16),
         learning_rate: float = 1e-3,
     ) -> None:
         self.input_dim = input_dim
+        self.num_classes = num_classes
         self.hidden_units = hidden_units
         self.learning_rate = learning_rate
         self._model: Any = None
         self._build()
+
+    @property
+    def is_multiclass(self) -> bool:
+        return self.num_classes > 2
 
     def _build(self) -> None:
         import tensorflow as tf
@@ -116,17 +128,28 @@ class TinyNeuralNetwork:
         x = inputs
         for units in self.hidden_units:
             x = tf.keras.layers.Dense(units, activation="relu")(x)
-        outputs = tf.keras.layers.Dense(1, activation="sigmoid", name="ids_output")(x)
+
+        if self.is_multiclass:
+            outputs = tf.keras.layers.Dense(
+                self.num_classes, activation="softmax", name="ids_output"
+            )(x)
+            loss = "sparse_categorical_crossentropy"
+        else:
+            outputs = tf.keras.layers.Dense(1, activation="sigmoid", name="ids_output")(
+                x
+            )
+            loss = "binary_crossentropy"
 
         self._model = tf.keras.Model(inputs=inputs, outputs=outputs, name="tiny_ids")
         self._model.compile(
             optimizer=tf.keras.optimizers.Adam(self.learning_rate),
-            loss="binary_crossentropy",
+            loss=loss,
             metrics=["accuracy"],
         )
         logger.debug(
-            "TinyNeuralNetwork built – parameters: %d",
+            "TinyNeuralNetwork built – parameters: %d, classes: %d",
             self._model.count_params(),
+            self.num_classes,
         )
 
     def fit(
@@ -163,28 +186,40 @@ class TinyNeuralNetwork:
         return self
 
     def predict(self, X: np.ndarray, threshold: float = 0.5) -> np.ndarray:
-        """Predict binary labels for *X*.
+        """Predict labels for *X*.
+
+        For binary mode, applies *threshold* to the sigmoid output.
+        For multi-class mode, returns the argmax class index.
 
         Args:
             X: Feature matrix.
-            threshold: Decision threshold for the sigmoid output.
+            threshold: Decision threshold (binary mode only).
 
         Returns:
             Integer array of predicted labels.
         """
-        probs = self._model.predict(X.astype(np.float32), verbose=0)
-        return (probs.ravel() >= threshold).astype(int)
+        raw = self._model.predict(X.astype(np.float32), verbose=0)
+        if self.is_multiclass:
+            return np.argmax(raw, axis=1).astype(int)
+        return (raw.ravel() >= threshold).astype(int)
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """Return sigmoid output probabilities.
+        """Return output probabilities.
+
+        For binary mode, returns a 1-D array of attack probabilities.
+        For multi-class mode, returns a 2-D array of shape
+        ``(n_samples, num_classes)``.
 
         Args:
             X: Feature matrix.
 
         Returns:
-            1-D float array of probabilities for the positive (attack) class.
+            Probability array.
         """
-        return self._model.predict(X.astype(np.float32), verbose=0).ravel()
+        raw = self._model.predict(X.astype(np.float32), verbose=0)
+        if self.is_multiclass:
+            return raw
+        return raw.ravel()
 
     @property
     def keras_model(self) -> Any:

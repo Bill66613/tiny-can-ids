@@ -4,6 +4,9 @@ Usage::
 
     python scripts/run_pipeline.py [--output-dir OUTPUT_DIR]
 
+    # Train on all 4 attack types from the Car Hacking Dataset:
+    python scripts/run_pipeline.py --dataset-dir path/to/Car-Hacking-Dataset
+
 Steps:
 
 1. Generate (or load) a CAN bus dataset.
@@ -43,12 +46,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset",
         default=None,
-        help="Path to a Car Hacking Dataset CSV.  If omitted, synthetic data is used.",
+        help="Path to a single Car Hacking Dataset CSV (binary classification).",
+    )
+    parser.add_argument(
+        "--dataset-dir",
+        default=None,
+        help="Path to a directory with all Car Hacking Dataset CSVs "
+        "(DoS, Fuzzy, gear, RPM) for multi-class training.",
+    )
+    parser.add_argument(
+        "--max-rows-per-file",
+        type=int,
+        default=None,
+        help="Limit rows loaded per CSV in --dataset-dir mode (for quick experiments).",
     )
     parser.add_argument(
         "--output-dir",
         default="output",
-        help="Directory for exported artefacts (default: ./output).",
+        help="Directory for exported artifacts (default: ./output).",
     )
     parser.add_argument(
         "--window-size",
@@ -78,9 +93,24 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 1. Load / generate data
     # ------------------------------------------------------------------
-    from can_ids.data import generate_synthetic_can_data, load_can_dataset, preprocess_can_data
+    from can_ids.data import (
+        generate_synthetic_can_data,
+        load_can_dataset,
+        preprocess_can_data,
+    )
+    from can_ids.data.loader import load_multi_attack_dataset, CLASS_NAMES
 
-    if args.dataset:
+    num_classes = 2  # default: binary
+    class_names = ["Normal", "Attack"]
+
+    if args.dataset_dir:
+        logger.info("Loading multi-attack dataset from %s", args.dataset_dir)
+        raw_df = load_multi_attack_dataset(
+            args.dataset_dir, max_rows_per_file=args.max_rows_per_file
+        )
+        num_classes = len(CLASS_NAMES)
+        class_names = CLASS_NAMES
+    elif args.dataset:
         logger.info("Loading dataset from %s", args.dataset)
         raw_df = load_can_dataset(args.dataset)
     else:
@@ -120,20 +150,24 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 5. Train models
     # ------------------------------------------------------------------
-    from can_ids.models import train_logistic_regression, train_decision_tree, TinyNeuralNetwork
+    from can_ids.models import (
+        train_logistic_regression,
+        train_decision_tree,
+        TinyNeuralNetwork,
+    )
 
     logger.info("Training Logistic Regression …")
     lr_model = train_logistic_regression(X_train_s, y_train)
-    _report("Logistic Regression", lr_model.predict(X_test_s), y_test)
+    _report("Logistic Regression", lr_model.predict(X_test_s), y_test, class_names)
 
     logger.info("Training Decision Tree …")
     dt_model = train_decision_tree(X_train_s, y_train, max_depth=5)
-    _report("Decision Tree", dt_model.predict(X_test_s), y_test)
+    _report("Decision Tree", dt_model.predict(X_test_s), y_test, class_names)
 
-    logger.info("Training Tiny Neural Network …")
-    tnn = TinyNeuralNetwork(input_dim=X_train_s.shape[1])
+    logger.info("Training Tiny Neural Network (%d classes) …", num_classes)
+    tnn = TinyNeuralNetwork(input_dim=X_train_s.shape[1], num_classes=num_classes)
     tnn.fit(X_train_s, y_train, epochs=args.epochs, verbose=0)
-    _report("Tiny Neural Network", tnn.predict(X_test_s), y_test)
+    _report("Tiny Neural Network", tnn.predict(X_test_s), y_test, class_names)
     tnn.summary()
 
     # ------------------------------------------------------------------
@@ -144,7 +178,9 @@ def main() -> None:
     logger.info("Quantizing Tiny Neural Network (INT8) …")
     quantizer = ModelQuantizer(model=tnn, bits=8)
     quantizer.quantize()
-    logger.info("Quantized model footprint: %d bytes", quantizer.memory_footprint_bytes())
+    logger.info(
+        "Quantized model footprint: %d bytes", quantizer.memory_footprint_bytes()
+    )
 
     # ------------------------------------------------------------------
     # 7. TFLite export
@@ -164,7 +200,7 @@ def main() -> None:
             # ------------------------------------------------------------------
             logger.info("Validating TFLite inference …")
             tflite_preds = run_tflite_inference(tflite_bytes, X_test_s)
-            _report("TFLite (host validation)", tflite_preds, y_test)
+            _report("TFLite (host validation)", tflite_preds, y_test, class_names)
 
         except (ImportError, RuntimeError, OSError) as exc:
             logger.warning("TFLite export/validation failed: %s", exc)
@@ -177,27 +213,26 @@ def main() -> None:
     from can_ids.deploy import export_weights_to_c_header, generate_inference_c_code
 
     logger.info("Exporting C/C++ model files …")
-    header_path = export_weights_to_c_header(
-        quantizer, output_dir / "tiny_ids_weights"
-    )
-    c_path = generate_inference_c_code(
-        quantizer, output_dir / "tiny_ids_inference"
-    )
+    header_path = export_weights_to_c_header(quantizer, output_dir / "tiny_ids_weights")
+    c_path = generate_inference_c_code(quantizer, output_dir / "tiny_ids_inference")
     logger.info("C header: %s", header_path)
     logger.info("C source: %s", c_path)
 
     logger.info("Pipeline complete.  Artefacts in: %s", output_dir.resolve())
 
 
-def _report(name: str, y_pred: np.ndarray, y_true: np.ndarray) -> None:
+def _report(
+    name: str,
+    y_pred: np.ndarray,
+    y_true: np.ndarray,
+    class_names: list[str] | None = None,
+) -> None:
+    if class_names is None:
+        class_names = ["Normal", "Attack"]
     print(f"\n{'=' * 60}")
     print(f"  {name}")
     print("=" * 60)
-    print(
-        classification_report(
-            y_true, y_pred, target_names=["Normal", "Attack"], digits=4
-        )
-    )
+    print(classification_report(y_true, y_pred, target_names=class_names, digits=4))
 
 
 if __name__ == "__main__":

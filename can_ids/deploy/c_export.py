@@ -172,16 +172,23 @@ def generate_inference_c_code(
         in_size = layer.kernel_q.shape[0]
         buf_name = f"buf{idx}"
         is_last = idx == n_layers - 1
-        activation = "_sigmoid" if is_last else "_relu"
+        last_layer_outputs = quantizer.quantized_layers[-1].kernel_q.shape[1]
+        if is_last and last_layer_outputs > 1:
+            # Multi-class: skip activation; argmax is softmax-invariant
+            activation = None
+        elif is_last:
+            activation = "_sigmoid"
+        else:
+            activation = "_relu"
 
         code_parts.append(f"    /* Layer: {layer.name} */")
         code_parts.append(f"    for (int j = 0; j < {out_size}; ++j) {{")
         code_parts.append(f"        float acc = {model_name}_{layer_id}_bias[j]")
-        code_parts.append(f"                    * {model_name.upper()}_{layer_id.upper()}_BIAS_SCALE;")
-        code_parts.append(f"        for (int i = 0; i < {in_size}; ++i) {{")
         code_parts.append(
-            f"            acc += {prev_buf}[i]"
+            f"                    * {model_name.upper()}_{layer_id.upper()}_BIAS_SCALE;"
         )
+        code_parts.append(f"        for (int i = 0; i < {in_size}; ++i) {{")
+        code_parts.append(f"            acc += {prev_buf}[i]")
         code_parts.append(
             f"                  * (float){model_name}_{layer_id}_kernel[i * {out_size} + j]"
         )
@@ -189,14 +196,32 @@ def generate_inference_c_code(
             f"                  * {model_name.upper()}_{layer_id.upper()}_KERNEL_SCALE;"
         )
         code_parts.append(f"        }}")
-        code_parts.append(f"        {buf_name}[j] = {activation}(acc);")
+        if activation is not None:
+            code_parts.append(f"        {buf_name}[j] = {activation}(acc);")
+        else:
+            code_parts.append(f"        {buf_name}[j] = acc;")
         code_parts.append(f"    }}")
         code_parts.append("")
 
         prev_buf = buf_name
 
-    # Final output: binary decision from last buffer (single neuron sigmoid)
-    code_parts.append(f"    return {prev_buf}[0] >= 0.5f ? 1 : 0;")
+    # Final output: decision from last buffer
+    last_layer = quantizer.quantized_layers[-1]
+    n_outputs = last_layer.kernel_q.shape[1]
+    if n_outputs == 1:
+        # Binary classification: sigmoid threshold
+        code_parts.append(f"    return {prev_buf}[0] >= 0.5f ? 1 : 0;")
+    else:
+        # Multi-class classification: argmax
+        code_parts.append(f"    int best_class = 0;")
+        code_parts.append(f"    float best_score = {prev_buf}[0];")
+        code_parts.append(f"    for (int c = 1; c < {n_outputs}; ++c) {{")
+        code_parts.append(f"        if ({prev_buf}[c] > best_score) {{")
+        code_parts.append(f"            best_score = {prev_buf}[c];")
+        code_parts.append(f"            best_class = c;")
+        code_parts.append(f"        }}")
+        code_parts.append(f"    }}")
+        code_parts.append(f"    return best_class;")
     code_parts.append("}")
     code_parts.append("")
 
@@ -222,9 +247,7 @@ def _array_block(var_name: str, data: np.ndarray, comment: str = "") -> list[str
     lines = []
     if comment:
         lines.append(comment)
-    lines.append(
-        f"static const int8_t {var_name}[{data.size}] = {{"
-    )
+    lines.append(f"static const int8_t {var_name}[{data.size}] = {{")
     lines.append(f"    {wrapped}")
     lines.append("};")
     return lines

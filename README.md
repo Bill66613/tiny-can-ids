@@ -45,11 +45,17 @@ tests/
 ```bash
 pip install -r requirements.txt
 
-# Run the full pipeline with synthetic data
+# Run the full pipeline with synthetic data (binary: normal vs attack)
 python scripts/run_pipeline.py --output-dir output/
 
-# Run with a real dataset
+# Run with a single dataset file (binary classification)
 python scripts/run_pipeline.py --dataset path/to/can_dataset.csv --output-dir output/
+
+# Run with the full Car Hacking Dataset (multi-class: Normal, DoS, Fuzzy, Gear, RPM)
+python scripts/run_pipeline.py --dataset-dir "path/to/Car-Hacking Dataset" --output-dir output/
+
+# Quick experiment with limited rows per file
+python scripts/run_pipeline.py --dataset-dir "path/to/Car-Hacking Dataset" --max-rows-per-file 50000 --output-dir output/
 ```
 
 ## Testing
@@ -80,4 +86,3 @@ arm-none-eabi-gcc -O2 -mthumb -mcpu=cortex-m4 \
 | Tiny NN (32-16-1)   | ~3 KB       | ~0.8 KB     |
 | Decision Tree (d=5) | ~2 KB       | N/A         |
 | Logistic Regression | ~1 KB       | N/A         |
-

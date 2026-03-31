@@ -93,7 +93,9 @@ def extract_timing_features(
     timestamps = df["Timestamp"].to_numpy(dtype=np.float64)
     inter_arrival = np.abs(np.diff(timestamps))
     # Pad the first position so length matches the frame count
-    inter_arrival = np.concatenate([[inter_arrival[0] if len(inter_arrival) > 0 else 0.0], inter_arrival])
+    inter_arrival = np.concatenate(
+        [[inter_arrival[0] if len(inter_arrival) > 0 else 0.0], inter_arrival]
+    )
 
     n = len(df)
     n_windows = max(1, n // window_size)
@@ -131,9 +133,7 @@ def extract_payload_features(
         2-D array of shape ``(n_windows, 17)``:
         8 per-position means + 8 per-position stds + mean Hamming weight.
     """
-    payload = df[[c for c in _PAYLOAD_COLS if c in df.columns]].to_numpy(
-        dtype=np.uint8
-    )
+    payload = df[[c for c in _PAYLOAD_COLS if c in df.columns]].to_numpy(dtype=np.uint8)
     n_cols = payload.shape[1]
     n = len(df)
     n_windows = max(1, n // window_size)
@@ -147,9 +147,7 @@ def extract_payload_features(
         means = window.mean(axis=0)
         stds = window.std(axis=0)
         hamming = np.mean(np.unpackbits(window.astype(np.uint8), axis=1).sum(axis=1))
-        features.append(
-            np.concatenate([means, stds, [hamming]]).astype(np.float32)
-        )
+        features.append(np.concatenate([means, stds, [hamming]]).astype(np.float32))
 
     return np.array(features, dtype=np.float32)
 
@@ -161,8 +159,13 @@ def build_feature_matrix(
     """Build the full feature matrix and label vector.
 
     Concatenates ID-frequency, timing, and payload features for each window.
-    The window label is 1 (attack) if *any* frame in the window is an attack
-    frame, otherwise 0 (normal).
+
+    For **binary** labels (0/1), the window label is 1 (attack) if *any*
+    frame in the window is an attack frame, otherwise 0 (normal).
+
+    For **multi-class** labels (0–N), the window label is the highest
+    attack class present in the window (ties go to the first seen).
+    If the window contains only normal frames (label 0), its label is 0.
 
     Args:
         df: Preprocessed CAN DataFrame.
@@ -182,13 +185,26 @@ def build_feature_matrix(
 
     labels = df["label"].to_numpy()
     n_windows = X.shape[0]
-    y = np.array(
-        [
-            int(labels[w * window_size : (w + 1) * window_size].any())
-            for w in range(n_windows)
-        ],
-        dtype=np.int32,
-    )
+    is_multiclass = labels.max() > 1
+
+    if is_multiclass:
+        # Multi-class: take the most common non-zero label in the window
+        y = np.zeros(n_windows, dtype=np.int32)
+        for w in range(n_windows):
+            window_labels = labels[w * window_size : (w + 1) * window_size]
+            attack_labels = window_labels[window_labels > 0]
+            if len(attack_labels) > 0:
+                # Use the most frequent attack class in this window
+                values, counts = np.unique(attack_labels, return_counts=True)
+                y[w] = values[np.argmax(counts)]
+    else:
+        y = np.array(
+            [
+                int(labels[w * window_size : (w + 1) * window_size].any())
+                for w in range(n_windows)
+            ],
+            dtype=np.int32,
+        )
 
     logger.info(
         "Feature matrix: %s, attack windows: %d / %d",

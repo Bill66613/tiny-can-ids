@@ -76,6 +76,7 @@ def test_preprocess_no_nan_timestamps():
 
 def test_load_can_dataset_file_not_found():
     from can_ids.data.loader import load_can_dataset
+
     with pytest.raises(FileNotFoundError):
         load_can_dataset("/nonexistent/path/data.csv")
 

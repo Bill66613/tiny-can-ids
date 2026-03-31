@@ -20,6 +20,7 @@ from can_ids.models.compress import (
 # Shared fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def binary_dataset():
     X, y = make_classification(
@@ -44,6 +45,7 @@ def trained_tnn(binary_dataset):
 # Logistic Regression
 # ---------------------------------------------------------------------------
 
+
 def test_logistic_regression_trains(binary_dataset):
     X, y = binary_dataset
     model = train_logistic_regression(X, y)
@@ -67,6 +69,7 @@ def test_logistic_regression_accuracy(binary_dataset):
 # ---------------------------------------------------------------------------
 # Decision Tree
 # ---------------------------------------------------------------------------
+
 
 def test_decision_tree_trains(binary_dataset):
     X, y = binary_dataset
@@ -98,6 +101,7 @@ def test_decision_tree_pruning(binary_dataset):
 # Tiny Neural Network
 # ---------------------------------------------------------------------------
 
+
 def test_tnn_predict_shape(binary_dataset, trained_tnn):
     X, _ = binary_dataset
     preds = trained_tnn.predict(X)
@@ -119,12 +123,14 @@ def test_tnn_predict_proba_range(binary_dataset, trained_tnn):
 
 def test_tnn_keras_model_accessible(trained_tnn):
     import tensorflow as tf
+
     assert isinstance(trained_tnn.keras_model, tf.keras.Model)
 
 
 # ---------------------------------------------------------------------------
 # Weight quantization
 # ---------------------------------------------------------------------------
+
 
 def test_quantize_weights_shape():
     w = np.random.randn(10, 5).astype(np.float32)
@@ -160,6 +166,7 @@ def test_quantize_invalid_bits():
 # ---------------------------------------------------------------------------
 # ModelQuantizer
 # ---------------------------------------------------------------------------
+
 
 def test_model_quantizer_layers(trained_tnn):
     quantizer = ModelQuantizer(model=trained_tnn, bits=8)

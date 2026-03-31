@@ -1,0 +1,51 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install*)",
+      "Bash(pip list*)",
+      "Bash(pip show*)",
+      "Bash(pytest*)",
+      "Bash(python -m scripts.run_pipeline*)",
+      "Bash(python -m pytest*)",
+      "Bash(python -c *)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git branch*)",
+      "Bash(git add*)",
+      "Bash(git stash*)",
+      "Bash(git checkout*)",
+      "Bash(ls*)",
+      "Bash(cat*)",
+      "Bash(mkdir*)",
+      "Bash(wc *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(du *)",
+      "Bash(find *)",
+      "mcp__pylance_mcp_server__*",
+      "mcp__gitkraken__*",
+      "mcp__io_github_github_github-mcp-server__*"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf /*)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[hook] File modified — remember to run /test before committing'"
+          }
+        ]
+      }
+    ]
+  }
+}

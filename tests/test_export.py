@@ -19,6 +19,7 @@ from can_ids.deploy.c_export import (
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def tiny_dataset():
     X, y = make_classification(
@@ -49,6 +50,7 @@ def quantizer(trained_tnn):
 # C header export
 # ---------------------------------------------------------------------------
 
+
 def test_c_header_created(tmp_path, quantizer):
     out = export_weights_to_c_header(quantizer, tmp_path / "weights")
     assert out.exists()
@@ -56,7 +58,9 @@ def test_c_header_created(tmp_path, quantizer):
 
 
 def test_c_header_include_guard(tmp_path, quantizer):
-    out = export_weights_to_c_header(quantizer, tmp_path / "weights2", model_name="my_ids")
+    out = export_weights_to_c_header(
+        quantizer, tmp_path / "weights2", model_name="my_ids"
+    )
     content = out.read_text()
     assert "#ifndef MY_IDS_WEIGHTS_H" in content
     assert "#define MY_IDS_WEIGHTS_H" in content
@@ -80,6 +84,7 @@ def test_c_header_scale_defines(tmp_path, quantizer):
 # ---------------------------------------------------------------------------
 # C inference code generation
 # ---------------------------------------------------------------------------
+
 
 def test_c_inference_created(tmp_path, quantizer):
     out = generate_inference_c_code(quantizer, tmp_path / "inference")
@@ -115,6 +120,7 @@ def test_c_inference_contains_sigmoid(tmp_path, quantizer):
 # TFLite export
 # ---------------------------------------------------------------------------
 
+
 def test_tflite_export_returns_bytes(tiny_dataset, trained_tnn):
     pytest.importorskip("tensorflow")
     from can_ids.models.export import export_to_tflite
@@ -137,7 +143,11 @@ def test_tflite_export_size_reasonable(tiny_dataset, trained_tnn):
 
 def test_tflite_save_and_load(tmp_path, tiny_dataset, trained_tnn):
     pytest.importorskip("tensorflow")
-    from can_ids.models.export import export_to_tflite, save_tflite_model, load_tflite_model
+    from can_ids.models.export import (
+        export_to_tflite,
+        save_tflite_model,
+        load_tflite_model,
+    )
 
     X, _ = tiny_dataset
     tflite_bytes = export_to_tflite(trained_tnn, X[:50])

@@ -84,9 +84,7 @@ def export_to_tflite(
                 "float32": tf.float32,
             }
             converter.inference_input_type = _dtype_map.get(input_type, tf.float32)
-            converter.inference_output_type = _dtype_map.get(
-                output_type, tf.float32
-            )
+            converter.inference_output_type = _dtype_map.get(output_type, tf.float32)
 
         tflite_model: bytes = converter.convert()
 
@@ -140,10 +138,14 @@ def run_tflite_inference(
     Useful for validating the exported model on the host before deploying
     it to an embedded target.
 
+    Automatically detects binary vs multi-class models from the output
+    tensor shape.
+
     Args:
         tflite_model: Serialized TFLite model (bytes).
         X: Feature matrix of shape ``(n_samples, n_features)``.
-        threshold: Decision threshold applied to the sigmoid output.
+        threshold: Decision threshold applied to the sigmoid output
+            (binary mode only).
 
     Returns:
         Integer array of predicted labels.
@@ -164,6 +166,8 @@ def run_tflite_inference(
 
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
+    output_shape = output_details[0]["shape"]
+    is_multiclass = len(output_shape) >= 2 and output_shape[-1] > 1
 
     preds = []
     for i in range(len(X)):
@@ -171,7 +175,13 @@ def run_tflite_inference(
         interpreter.set_tensor(input_details[0]["index"], sample)
         interpreter.invoke()
         output = interpreter.get_tensor(output_details[0]["index"])
-        preds.append(float(output.ravel()[0]))
+        if is_multiclass:
+            preds.append(int(np.argmax(output.ravel())))
+        else:
+            preds.append(float(output.ravel()[0]))
+
+    if is_multiclass:
+        return np.array(preds, dtype=np.int32)
 
     probs = np.array(preds, dtype=np.float32)
     return (probs >= threshold).astype(int)

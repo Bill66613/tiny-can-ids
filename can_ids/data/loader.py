@@ -124,23 +124,116 @@ def load_can_dataset(path: str | Path) -> pd.DataFrame:
         raise FileNotFoundError(f"Dataset not found: {path}")
 
     try:
-        # Try whitespace-delimited first (original KAIST format)
-        df = pd.read_csv(path, sep=r"\s+", header=None, engine="python")
-        if df.shape[1] == len(_RAW_COLUMNS):
-            df.columns = _RAW_COLUMNS
-        elif df.shape[1] == len(_RAW_COLUMNS) - 1:
-            # Some versions omit the Flag column – treat all as normal
-            df.columns = _RAW_COLUMNS[:-1]
-            df["Flag"] = _NORMAL_FLAG
-        else:
-            # Fall back to comma-separated
-            df = pd.read_csv(path)
+        # The Car Hacking Dataset CSVs have no header row and variable-width
+        # rows: when DLC < 8 only DLC data bytes are present, but the Flag
+        # field (R/T) is always the last column.  We read with the python
+        # engine so pandas doesn't choke on inconsistent column counts, then
+        # normalise every row to 12 columns (Timestamp, ID, DLC, Data0-7, Flag).
+        df = _read_variable_width_csv(path)
         _validate_columns(df)
     except (pd.errors.ParserError, ValueError, KeyError, OSError) as exc:
         raise ValueError(f"Could not parse CAN dataset at {path}: {exc}") from exc
 
     logger.info("Loaded %d frames from %s", len(df), path)
     return df
+
+
+# Mapping from dataset filename patterns to multi-class attack labels.
+# Label 0 is always reserved for normal traffic.
+ATTACK_LABEL_MAP: dict[str, int] = {
+    "DoS": 1,
+    "Fuzzy": 2,
+    "gear": 3,
+    "RPM": 4,
+}
+
+CLASS_NAMES: list[str] = ["Normal", "DoS", "Fuzzy", "Gear", "RPM"]
+
+
+def load_multi_attack_dataset(
+    dataset_dir: str | Path,
+    max_rows_per_file: int | None = None,
+) -> pd.DataFrame:
+    """Load all Car Hacking Dataset CSVs from a directory and assign multi-class labels.
+
+    Each CSV file is expected to contain both normal (``R``) and attack
+    (``T``) frames.  The attack class is inferred from the filename:
+
+    * ``DoS_dataset.csv``   → label 1
+    * ``Fuzzy_dataset.csv`` → label 2
+    * ``gear_dataset.csv``  → label 3
+    * ``RPM_dataset.csv``   → label 4
+
+    Normal frames (``R``) from every file are assigned label 0.
+    Duplicate normal frames across files are dropped.
+
+    Args:
+        dataset_dir: Path to the directory containing the CSV files.
+        max_rows_per_file: Optional cap on rows loaded per file (useful for
+            quick experiments).
+
+    Returns:
+        A combined DataFrame with an extra ``attack_type`` column (int)
+        containing the multi-class label.
+
+    Raises:
+        FileNotFoundError: If *dataset_dir* does not exist or contains none
+            of the expected CSV files.
+    """
+    dataset_dir = Path(dataset_dir)
+    if not dataset_dir.is_dir():
+        raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
+
+    parts: list[pd.DataFrame] = []
+    normal_frames: pd.DataFrame | None = None
+
+    for pattern, label in ATTACK_LABEL_MAP.items():
+        matches = list(dataset_dir.glob(f"{pattern}*dataset*.csv"))
+        if not matches:
+            logger.warning(
+                "No CSV matching '%s*dataset*.csv' in %s", pattern, dataset_dir
+            )
+            continue
+
+        csv_path = matches[0]
+        logger.info("Loading %s (attack_type=%d) …", csv_path.name, label)
+        raw = load_can_dataset(csv_path)
+        if max_rows_per_file is not None:
+            raw = raw.head(max_rows_per_file)
+
+        # Assign multi-class label: 0 for normal, attack label for attacks
+        is_attack = raw["Flag"].astype(str).str.strip() != _NORMAL_FLAG
+        raw["attack_type"] = 0
+        raw.loc[is_attack, "attack_type"] = label
+
+        # Separate normal and attack rows
+        attack_rows = raw[is_attack]
+        norm_rows = raw[~is_attack]
+        parts.append(attack_rows)
+
+        if normal_frames is None:
+            normal_frames = norm_rows
+        # We keep only one copy of normal traffic to avoid duplication
+
+    if not parts:
+        raise FileNotFoundError(f"No Car Hacking Dataset CSVs found in {dataset_dir}")
+
+    if normal_frames is not None:
+        normal_frames = normal_frames.copy()
+        normal_frames["attack_type"] = 0
+        parts.insert(0, normal_frames)
+
+    combined = pd.concat(parts, ignore_index=True)
+    combined["Timestamp"] = pd.to_numeric(combined["Timestamp"], errors="coerce")
+    combined.sort_values("Timestamp", inplace=True)
+    combined.reset_index(drop=True, inplace=True)
+
+    logger.info(
+        "Combined multi-attack dataset: %d frames, classes: %s",
+        len(combined),
+        combined["attack_type"].value_counts().to_dict(),
+    )
+    return combined
 
 
 def preprocess_can_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -152,15 +245,21 @@ def preprocess_can_data(df: pd.DataFrame) -> pd.DataFrame:
     2. Convert ``ID`` to integer (from hex string).
     3. Convert payload bytes to integers (``Data0``–``Data7``).
     4. Convert ``DLC`` to integer.
-    5. Map ``Flag`` to a binary integer label: 0 = normal, 1 = attack.
+    5. Map ``Flag`` to a label column.
+
+       * If an ``attack_type`` column exists (multi-class), it is used
+         directly as the ``label``.
+       * Otherwise, a binary label is created: 0 = normal, 1 = attack.
+
     6. Sort by timestamp and reset the index.
 
     Args:
-        df: Raw CAN DataFrame (as returned by :func:`load_can_dataset` or
+        df: Raw CAN DataFrame (as returned by :func:`load_can_dataset`,
+            :func:`load_multi_attack_dataset`, or
             :func:`generate_synthetic_can_data`).
 
     Returns:
-        Preprocessed DataFrame with an additional ``label`` column.
+        Preprocessed DataFrame with a ``label`` column.
     """
     df = df.copy()
 
@@ -176,17 +275,19 @@ def preprocess_can_data(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df[col] = 0
 
-    df["label"] = (df["Flag"].astype(str).str.strip() != _NORMAL_FLAG).astype(int)
+    if "attack_type" in df.columns:
+        df["label"] = df["attack_type"].astype(int)
+    else:
+        df["label"] = (df["Flag"].astype(str).str.strip() != _NORMAL_FLAG).astype(int)
 
     df.sort_values("Timestamp", inplace=True)
     df.reset_index(drop=True, inplace=True)
     df.dropna(subset=["Timestamp"], inplace=True)
 
     logger.debug(
-        "After preprocessing: %d frames, %d attack (%.1f%%)",
+        "After preprocessing: %d frames, label distribution: %s",
         len(df),
-        df["label"].sum(),
-        100 * df["label"].mean(),
+        df["label"].value_counts().to_dict(),
     )
     return df
 
@@ -194,6 +295,47 @@ def preprocess_can_data(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _read_variable_width_csv(path: Path) -> pd.DataFrame:
+    """Read a Car Hacking Dataset CSV that may have variable-width rows.
+
+    When DLC < 8 the row has fewer data-byte fields, but the Flag (R/T) is
+    always the *last* field.  This function normalises every row to the
+    standard 12-column layout: Timestamp, ID, DLC, Data0–Data7, Flag.
+    """
+    # Fast path: try reading with fixed 12 columns first
+    try:
+        df = pd.read_csv(path, header=None)
+        if df.shape[1] == len(_RAW_COLUMNS):
+            df.columns = _RAW_COLUMNS
+            return df
+    except pd.errors.ParserError:
+        pass
+
+    # Slow path: handle variable-width rows
+    logger.info(
+        "Variable-width rows detected – using flexible parser for %s", path.name
+    )
+    rows: list[list[str]] = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            parts = line.strip().split(",")
+            if len(parts) < 5:
+                continue
+            # Layout: Timestamp, ID, DLC, <DLC data bytes>, Flag
+            ts = parts[0]
+            can_id = parts[1]
+            dlc = parts[2]
+            flag = parts[-1]
+            data_fields = parts[3:-1]  # variable length (0–8)
+            # Pad to exactly 8 data fields
+            data_fields = (data_fields + ["00"] * 8)[:8]
+            rows.append([ts, can_id, dlc] + data_fields + [flag])
+
+    df = pd.DataFrame(rows, columns=_RAW_COLUMNS)
+    return df
+
 
 def _validate_columns(df: pd.DataFrame) -> None:
     required = {"Timestamp", "ID", "DLC", "Flag"}
