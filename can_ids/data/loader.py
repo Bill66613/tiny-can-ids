@@ -304,7 +304,17 @@ def _read_variable_width_csv(path: Path) -> pd.DataFrame:
     always the *last* field.  This function normalises every row to the
     standard 12-column layout: Timestamp, ID, DLC, Data0–Data7, Flag.
     """
-    # Fast path: try reading with fixed 12 columns first
+    # Fast path: try reading with a header row first (handles CSVs written
+    # with pandas to_csv which includes a header by default).
+    try:
+        df = pd.read_csv(path)
+        if df.shape[1] == len(_RAW_COLUMNS) and list(df.columns) == _RAW_COLUMNS:
+            return df
+    except pd.errors.ParserError:
+        pass
+
+    # Fast path: try reading without a header (original Car Hacking Dataset
+    # format has no header row).
     try:
         df = pd.read_csv(path, header=None)
         if df.shape[1] == len(_RAW_COLUMNS):
