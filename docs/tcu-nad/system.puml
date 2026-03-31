@@ -1,2 +1,113 @@
-@startuml System Diagram
+@startuml TCU-NAD System Context – Linux IDS
+!theme plain
+skinparam defaultFontSize 11
+skinparam actorStyle awesome
+
+title TCU / NAD Deployment – System Context Diagram
+
+' === External Actors ===
+actor "SOC / Fleet\nOperator" as SOC
+actor "ML Engineer" as MLEng
+actor "Vehicle Driver" as Driver
+
+' === Cloud ===
+cloud "OEM Cloud Backend" as Cloud {
+    component "OTA Server\n(Model Updates)" as OTA_Server
+    component "SIEM / Telemetry\n(Alert Ingestion)" as SIEM
+    component "ML Platform\n(Retraining)" as MLPlat
+}
+
+' === Cellular Network ===
+node "LTE / 5G\nNetwork" as Cellular #LightYellow
+
+' === Vehicle ===
+package "Vehicle" as Vehicle {
+
+    package "CAN Bus Network" as CAN_Net {
+        node "CAN HS Bus\n(500 kbps)" as CAN_HS #LightYellow
+        node "Engine ECU" as ECU_ENG #LightCyan
+        node "Transmission\nECU" as ECU_TRANS #LightCyan
+        node "ADAS ECU" as ECU_ADAS #LightCyan
+        node "Body Control\nModule" as BCM #LightCyan
+        node "OBD-II Port" as OBD #Orange
+    }
+
+    node "TCU / NAD" as TCU #LightGreen {
+        component "Linux (Yocto / AGL)" as Linux
+        component "IDS Service\n(tiny-can-ids)" as IDS #PaleGreen
+        component "SocketCAN\n(can0)" as SCAN
+        component "OTA Agent" as OTA_Agent
+        component "MQTT Client" as MQTT_C
+        component "CAN-to-Ethernet\nBridge" as CAN_ETH
+    }
+
+    node "Instrument\nCluster / HMI" as HMI #LightCyan
+    node "Central\nGateway" as GW #Plum
+}
+
+' === Data flows ===
+ECU_ENG --> CAN_HS
+ECU_TRANS --> CAN_HS
+ECU_ADAS --> CAN_HS
+BCM --> CAN_HS
+OBD --> CAN_HS : <<attack vector>>
+
+CAN_HS --> GW : All frames
+GW --> SCAN : Forwarded\nframes
+SCAN --> IDS : CAN frames\nvia SocketCAN
+
+IDS --> MQTT_C : Alert events\n(JSON)
+IDS --> Linux : syslog /\njournald
+MQTT_C --> Cellular : Publish\nalerts
+Cellular --> SIEM : Alert data
+
+OTA_Server --> Cellular : Model update\npackage
+Cellular --> OTA_Agent : Download\nupdate
+OTA_Agent --> IDS : Hot-swap\nmodel file
+
+IDS --> CAN_ETH : Stream to\nbackend (opt.)
+CAN_ETH --> Cellular : CAN-over-IP
+
+IDS --> GW : Alert frame\n(CAN TX)
+GW --> HMI : Warning\ndisplay
+
+SOC --> SIEM : Monitor\nalerts
+MLEng --> MLPlat : Train &\npublish model
+MLPlat --> OTA_Server : New model\nartifact
+Driver --> HMI : Observes\nalert
+
+note right of TCU
+  **Hardware examples:**
+  Qualcomm SA515M (Cortex-A7)
+  NXP i.MX8 (Cortex-A53)
+  Cinterion ELS62 (LTE Cat 1)
+  RAM: 256 MB – 1 GB
+  Flash: 256 MB – 4 GB
+end note
+
+note bottom of IDS
+  **Model formats supported:**
+  • .tflite (TensorFlow Lite)
+  • .onnx (ONNX Runtime)
+  • .so (compiled C library)
+  • .pkl (Python scikit-learn)
+  Inference: < 1 ms
+end note
+
+note left of OBD
+  **Threats detected:**
+  DoS flooding
+  Fuzzy frame injection
+  Gear/RPM spoofing
+  Replay attacks
+end note
+
+note right of Cloud
+  **Cloud loop:**
+  1. IDS detects anomaly → alert
+  2. SIEM correlates across fleet
+  3. ML platform retrains model
+  4. OTA pushes updated model
+end note
+
 @enduml

@@ -1,2 +1,86 @@
-@startuml System Diagram
+@startuml MCU System Context – Bare-Metal IDS
+!theme plain
+skinparam defaultFontSize 11
+skinparam actorStyle awesome
+
+title MCU Deployment – System Context Diagram
+
+' === External Actors ===
+actor "Embedded\nDeveloper" as Dev
+actor "Fleet Operator" as Fleet
+
+' === Vehicle Network ===
+package "Vehicle CAN Bus" as VehicleBus {
+    node "CAN High-Speed Bus\n(500 kbps)" as CAN_HS #LightYellow
+    node "CAN Low-Speed Bus\n(125 kbps)" as CAN_LS #LightYellow
+}
+
+package "CAN Bus Nodes" as Nodes {
+    node "Engine\nECU" as ECU_ENG #LightCyan
+    node "Transmission\nECU" as ECU_TRANS #LightCyan
+    node "ABS / ESP\nECU" as ECU_ABS #LightCyan
+    node "Body Control\nModule" as BCM #LightCyan
+    node "OBD-II\nPort" as OBD #Orange
+}
+
+' === Target MCU ===
+node "IDS MCU Board" as MCU_Board #LightGreen {
+    component "CAN\nTransceiver\n(TJA1050)" as CAN_PHY
+    component "ARM Cortex-M4\nMCU" as MCU_Core #PaleGreen {
+    }
+    component "Status LEDs\n(Normal/Attack)" as LEDs
+    component "UART\n(Debug / Log)" as UART_Port
+}
+
+' === Optional external ===
+node "Gateway ECU\n(optional)" as GW #Plum
+node "Debugger\n(J-Link / ST-Link)" as Debugger #LightGray
+
+' === Connections ===
+ECU_ENG --> CAN_HS : Engine rpm,\ntemp, load
+ECU_TRANS --> CAN_HS : Gear, speed
+ECU_ABS --> CAN_HS : Wheel speed,\nbrake pressure
+BCM --> CAN_LS : Door, lights,\nwindows
+OBD --> CAN_HS : <<potential\nattack entry>>
+
+CAN_HS --> CAN_PHY : CAN H/L
+CAN_LS --> CAN_PHY : CAN H/L\n(dual-channel)
+CAN_PHY --> MCU_Core : RX frames\n(MCAN peripheral)
+MCU_Core --> CAN_PHY : TX alert\nframe (0x7FF)
+MCU_Core --> LEDs : Attack indicator
+MCU_Core --> UART_Port : Debug output
+
+MCU_Board --> GW : Alert\nrelay (CAN)
+GW --> CAN_HS : Block / filter\nmalicious frames
+
+Debugger --> MCU_Board : SWD\n(flash + debug)
+Dev --> Debugger : arm-none-eabi-gcc\nbuild + flash
+
+Fleet --> GW : Remote\nmonitoring
+
+note right of MCU_Board
+  **Target hardware:**
+  STM32F446RE (Cortex-M4 @ 180 MHz)
+  RAM: 128 KB | Flash: 512 KB
+  CAN 2.0B: 3 × CAN interfaces
+  Power: 5V from vehicle harness
+end note
+
+note bottom of MCU_Core
+  **IDS pipeline on-chip:**
+  1. CAN RX → ring buffer (256 frames)
+  2. Feature extraction (46 features)
+  3. INT8 inference (TNN/LR/DT)
+  4. Alert via GPIO + CAN TX
+  Total memory: < 4 KB model + 8 KB app
+end note
+
+note left of OBD
+  **Monitored attacks:**
+  • DoS flooding
+  • Fuzzy injection
+  • Gear spoofing
+  • RPM spoofing
+end note
+
 @enduml

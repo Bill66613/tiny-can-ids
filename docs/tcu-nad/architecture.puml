@@ -1,2 +1,105 @@
-@startuml Architecture Diagram
+@startuml TCU-NAD Architecture – Linux IDS
+!theme plain
+skinparam componentStyle rectangle
+skinparam defaultFontSize 11
+skinparam packageStyle frame
+
+title TCU / NAD Deployment – Linux Architecture\n(Qualcomm SA515M, i.MX8, Cinterion ELS62)
+
+package "Linux Kernel" as Kernel {
+    component "SocketCAN\nDriver (can0)" as SocketCAN #LightBlue
+    component "Network Stack\n(TCP/IP, LTE)" as NetStack #LightBlue
+    component "Filesystem\n(ext4 / squashfs)" as FS #LightBlue
+}
+
+package "Userspace Services" as Userspace {
+    package "IDS Service (tiny-can-ids)" as IDS_Svc #LightGreen {
+        component "CAN Reader\n(candump / python-can)" as CANReader
+        component "Feature\nExtraction\n(NumPy / C lib)" as FeatExt
+
+        package "Inference Backends" as Backends #PaleGreen {
+            component "TFLite Runtime\n(.tflite model)" as TFLite
+            component "ONNX Runtime\n(.onnx model)" as ONNX
+            component "Native C Library\n(.so from\ntiny_ids_*_inference.c)" as NativeC
+            component "Python Direct\n(scikit-learn .pkl)" as PyDirect
+        }
+
+        component "Alert Publisher\n(D-Bus / MQTT)" as AlertPub
+        component "Event Logger\n(journald / file)" as Logger
+    }
+
+    package "Platform Services" as Platform {
+        component "Systemd\n(service mgr)" as Systemd
+        component "MQTT Client\n(Mosquitto)" as MQTT #Plum
+        component "OTA Agent\n(SWUpdate /\nMender / Aktualizr)" as OTA #Plum
+        component "Firewall\n(iptables / nftables)" as Firewall
+    }
+
+    package "Analytics (optional)" as Analytics {
+        component "Model Retraining\n(TensorFlow)" as Retrain #Khaki
+        component "Data Collector\n(CAN log → CSV)" as DataCol #Khaki
+    }
+}
+
+package "Persistent Storage" as Storage #Wheat {
+    database "Model Files\n(.tflite, .onnx,\n.pkl, .so)" as Models
+    database "Alert Log\n(SQLite / JSON)" as AlertDB
+    database "CAN Trace\n(pcap / asc)" as CANTrace
+}
+
+' === Connections ===
+SocketCAN --> CANReader : Raw CAN\nframes (AF_CAN)
+CANReader --> FeatExt : Sliding window\n(100 frames)
+FeatExt --> TFLite : float[46]
+FeatExt --> ONNX : float[46]
+FeatExt --> NativeC : float[46]
+FeatExt --> PyDirect : float[46]
+
+TFLite --> AlertPub : prediction
+ONNX --> AlertPub : prediction
+NativeC --> AlertPub : prediction
+PyDirect --> AlertPub : prediction
+
+AlertPub --> MQTT : Publish\nalert topic
+AlertPub --> Logger : Log event\n(syslog)
+Logger --> AlertDB : Persist
+
+CANReader --> DataCol : Raw frames\n(background)
+DataCol --> CANTrace : .pcap / .csv
+DataCol --> Retrain : Training data
+
+Systemd --> IDS_Svc : Start / restart\n/ watchdog
+OTA --> Models : Update model\nfiles (A/B)
+Models --> TFLite : Load model
+Models --> ONNX : Load model
+Models --> NativeC : dlopen()
+Models --> PyDirect : pickle.load()
+
+NetStack --> MQTT : LTE / Wi-Fi\nuplink
+NetStack --> OTA : OTA download
+
+note right of Backends
+  **Runtime options (pick one):**
+  1. TFLite: Best accuracy, ~1 MB RAM
+  2. ONNX: Cross-framework, ~2 MB RAM
+  3. Native C (.so): Smallest, < 10 KB
+  4. Python: Fastest dev cycle
+  Inference: < 1 ms on Cortex-A
+end note
+
+note bottom of FeatExt
+  **46 features per window:**
+  22 ID frequency (20 top IDs + other + entropy)
+  4 timing (mean, std, min, max IAT)
+  17 payload (byte statistics)
+  3 rate / novelty metrics
+end note
+
+note right of OTA
+  **Update path:**
+  • Full model swap via OTA agent
+  • No reboot needed for .tflite/.pkl
+  • A/B partition for native C lib
+end note
+
 @enduml

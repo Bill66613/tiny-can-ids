@@ -1,2 +1,79 @@
-@startuml Architecture Diagram
+@startuml ECU Architecture – AUTOSAR IDS SWC
+!theme plain
+skinparam componentStyle rectangle
+skinparam defaultFontSize 11
+skinparam packageStyle frame
+
+title ECU Deployment – AUTOSAR Classic Architecture\n(Infineon AURIX TC3xx / NXP S32G)
+
+package "AUTOSAR BSW (Basic Software)" as BSW {
+    component "MCAL\n(CAN Driver)" as MCAL #LightBlue
+    component "CAN Interface\n(CanIf)" as CanIf #LightBlue
+    component "PDU Router\n(PduR)" as PduR #LightBlue
+    component "COM Stack" as COM #LightBlue
+    component "DCM\n(Diagnostic\nCommunication)" as DCM #LightBlue
+    component "DEM\n(Diagnostic\nEvent Manager)" as DEM #LightBlue
+    component "NvM\n(Non-Volatile\nMemory)" as NvM #LightBlue
+    component "RTE\n(Runtime Environment)" as RTE #LightGoldenRodYellow
+}
+
+package "AUTOSAR SWC Layer" as SWC_Layer {
+    package "IDS SWC (tiny-can-ids)" as IDS_SWC #LightGreen {
+        component "CAN Frame\nBuffer\n(Rte_Read)" as FrameBuf
+        component "Feature\nExtraction\n(46 features)" as FeatExt
+        component "Model Inference\n(static C code)" as Inference #PaleGreen
+        component "Alert\nManager" as AlertMgr
+    }
+
+    package "Model Weights (Flash)" as Weights #Wheat {
+        component "tiny_ids_tnn_weights.h\n(INT8 arrays)" as TNN_W
+        component "tiny_ids_lr_weights.h\n(INT8 coef)" as LR_W
+        component "tiny_ids_dt_weights.h\n(tree nodes)" as DT_W
+    }
+
+    component "Application SWC\n(Vehicle Functions)" as AppSWC #LightCyan
+}
+
+package "AUTOSAR Services" as Services {
+    component "UCM\n(Update &\nConfig Mgr)" as UCM #Plum
+    component "SecOC\n(Secure\nOnboard Comm)" as SecOC #Plum
+}
+
+' === Data flows ===
+MCAL --> CanIf : Raw CAN\nframes
+CanIf --> PduR : CAN PDUs
+PduR --> COM : Signal routing
+COM --> RTE : Signal\ndelivery
+
+RTE --> FrameBuf : Rte_Read_CAN_Frame
+FrameBuf --> FeatExt : Sliding window\n(100 frames)
+FeatExt --> Inference : float[46]\nfeature vector
+
+TNN_W --> Inference
+LR_W --> Inference
+DT_W --> Inference
+
+Inference --> AlertMgr : Prediction\n(0=normal, 1=attack)
+AlertMgr --> RTE : Rte_Write_IDS_Alert
+RTE --> DEM : DTC report\n(0xC10100)
+RTE --> DCM : UDS response\n(DID 0xF1F0)
+AlertMgr --> NvM : Log event\n(persistent)
+
+UCM --> IDS_SWC : OTA model\nupdate (UDS)
+SecOC --> CanIf : Frame\nauthentication
+
+note right of Inference
+  **Inference functions (all static C, no malloc):**
+  • tiny_ids_tnn_predict(float*, int) → int
+  • tiny_ids_lr_predict(float*, int) → int
+  • tiny_ids_dt_predict(float*, int) → int
+  Runs in ~100 µs – 2 ms on Cortex-M/R
+end note
+
+note bottom of FeatExt
+  **46 features per window:**
+  22 ID frequency + 4 timing
+  + 17 payload + 3 rate/novelty
+end note
+
 @enduml

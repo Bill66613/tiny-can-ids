@@ -1,2 +1,92 @@
-@startuml Architecture Diagram
+@startuml MCU Architecture – Bare-Metal IDS
+!theme plain
+skinparam componentStyle rectangle
+skinparam defaultFontSize 11
+skinparam packageStyle frame
+
+title MCU Deployment – Bare-Metal / RTOS Architecture\n(STM32F4/H7, NXP S32K, TI Hercules)
+
+package "Hardware Abstraction" as HAL {
+    component "CAN Peripheral\nDriver (MCAN)" as CAN_DRV #LightBlue
+    component "GPIO / LED\nDriver" as GPIO #LightBlue
+    component "UART Driver\n(Debug)" as UART #LightBlue
+    component "Flash Driver" as FLASH_DRV #LightBlue
+    component "Timer / SysTick" as TIMER #LightBlue
+}
+
+package "RTOS (optional)" as RTOS #LightYellow {
+    component "Task Scheduler\n(FreeRTOS / bare loop)" as Sched
+    component "CAN RX Task\n(highest priority)" as CAN_Task
+    component "IDS Task\n(periodic)" as IDS_Task
+    component "Alert Task\n(low priority)" as Alert_Task
+}
+
+package "IDS Application (tiny-can-ids)" as IDS_App #LightGreen {
+    component "CAN Frame\nRing Buffer\n(static, 256 frames)" as RingBuf
+    component "Feature\nExtraction\n(46 features)" as FeatExt
+    component "Model Selector" as ModelSel
+
+    package "Inference Engines (static C)" as Engines #PaleGreen {
+        component "tiny_ids_tnn_predict()\nInput→32→16→1\n(INT8, ~0.8 KB)" as TNN
+        component "tiny_ids_lr_predict()\n46 coefficients\n(INT8, ~0.2 KB)" as LR
+        component "tiny_ids_dt_predict()\nDepth-5 tree\n(~2 KB)" as DT
+    }
+
+    component "Alert Handler\n(GPIO + CAN TX)" as AlertHdl
+}
+
+package "Flash (Read-Only)" as FlashMem #Wheat {
+    component "tiny_ids_tnn_weights.h" as TNN_W
+    component "tiny_ids_lr_weights.h" as LR_W
+    component "tiny_ids_dt_weights.h" as DT_W
+    component "Bootloader\n(A/B OTA)" as Boot
+}
+
+' === Connections ===
+CAN_DRV --> CAN_Task : CAN RX\ninterrupt / DMA
+CAN_Task --> RingBuf : Enqueue\nframe
+
+TIMER --> Sched : Tick
+Sched --> IDS_Task : Period:\n10 ms
+Sched --> Alert_Task : On event
+
+IDS_Task --> RingBuf : Dequeue\nwindow (100)
+RingBuf --> FeatExt
+FeatExt --> ModelSel : float[46]
+ModelSel --> TNN
+ModelSel --> LR
+ModelSel --> DT
+
+TNN_W ..> TNN : #include
+LR_W ..> LR : #include
+DT_W ..> DT : #include
+
+ModelSel --> AlertHdl : prediction\nresult
+AlertHdl --> GPIO : LED / buzzer\n(attack indicator)
+AlertHdl --> CAN_DRV : CAN TX\n(alert frame 0x7FF)
+AlertHdl --> UART : Debug log\n(optional)
+
+Boot --> FLASH_DRV : A/B image\nswap (OTA)
+
+note right of RingBuf
+  **Static allocation only**
+  No malloc / free
+  Stack-based inference buffers:
+  float buf0[32], buf1[16], buf2[1]
+end note
+
+note bottom of Engines
+  **Memory footprint:**
+  TNN: ~0.8 KB (INT8 weights)
+  LR: ~0.2 KB (46 coefficients)
+  DT: ~2 KB (tree arrays)
+  Total code + data < 4 KB
+end note
+
+note right of FeatExt
+  **Inference latency:**
+  50 – 500 µs on Cortex-M4 @ 168 MHz
+  (pure integer arithmetic, no FPU needed)
+end note
+
 @enduml

@@ -1,2 +1,80 @@
-@startuml System Diagram
+@startuml ECU System Context – AUTOSAR IDS
+!theme plain
+skinparam defaultFontSize 11
+skinparam actorStyle awesome
+
+title ECU Deployment – System Context Diagram
+
+' === External Actors ===
+actor "OEM Diagnostic\nTester" as Tester
+cloud "OEM Cloud\n(OTA Backend)" as Cloud
+actor "Vehicle Driver" as Driver
+
+' === Vehicle Network ===
+package "Vehicle CAN Bus Network" as VehicleNet {
+    node "CAN Bus\n(500 kbps)" as CAN_BUS #LightYellow {
+    }
+
+    node "Engine ECU" as ECU_ENG #LightCyan
+    node "Transmission\nECU" as ECU_TRANS #LightCyan
+    node "Body Control\nModule" as BCM #LightCyan
+    node "OBD-II\nPort" as OBD #Orange
+    node "Instrument\nCluster" as IC #LightCyan
+}
+
+' === Target ECU ===
+node "Gateway ECU – IDS Host" as GW_ECU #LightGreen {
+    component "AUTOSAR\nBSW Stack" as BSW
+    component "IDS SWC\n(tiny-can-ids)" as IDS_SWC #PaleGreen
+    component "DEM / DCM\n(Diagnostics)" as DIAG
+    database "NvM\n(Event Log)" as NVM_DB
+}
+
+' === TCU for OTA relay ===
+node "TCU / NAD\n(Connectivity)" as TCU #Plum {
+    component "OTA Agent" as OTA
+}
+
+' === Data flows ===
+ECU_ENG --> CAN_BUS : Engine\nframes
+ECU_TRANS --> CAN_BUS : Gear/RPM\nframes
+BCM --> CAN_BUS : Body\nframes
+OBD --> CAN_BUS : <<potential\nattack vector>>
+
+CAN_BUS --> GW_ECU : All CAN\nframes
+BSW --> IDS_SWC : CAN PDUs\nvia COM/RTE
+IDS_SWC --> DIAG : DTC on\nintrusion
+IDS_SWC --> NVM_DB : Log\nevents
+DIAG --> Tester : UDS response\n(DID 0xF1F0)
+
+GW_ECU --> IC : IDS alert\n(warning lamp)
+GW_ECU --> CAN_BUS : Filtered/blocked\nframes (gateway mode)
+
+Cloud --> TCU : OTA model\nupdate package
+TCU --> GW_ECU : Model update\nvia UDS/UCM
+
+Driver --> IC : Observes\nalert
+
+' === Attack scenarios ===
+note right of OBD
+  **Attack vectors monitored:**
+  DoS (flood), Fuzzy (random),
+  Gear spoofing, RPM spoofing
+end note
+
+note bottom of IDS_SWC
+  **Classification modes:**
+  • Binary: normal vs attack
+  • Multi-class: Normal, DoS,
+    Fuzzy, Gear, RPM
+end note
+
+note left of GW_ECU
+  **Hardware examples:**
+  Infineon AURIX TC3xx
+  NXP S32G (Gateway)
+  RAM: 256 KB – 4 MB
+  Flash: 2 MB – 16 MB
+end note
+
 @enduml
