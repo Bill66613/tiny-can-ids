@@ -9,7 +9,7 @@ TinyML-based CAN bus intrusion detection system for resource-constrained automot
 ```
 can_ids/
   data/       → Data loading (Car Hacking Dataset CSVs) & synthetic generation
-  features/   → Sliding-window feature extraction (43 features: 22 ID freq + 4 timing + 17 payload)
+  features/   → Sliding-window feature extraction (46 features: 22 ID freq + 4 timing + 17 payload + 3 rate/novelty)
   models/     → Classifiers (LogReg, DecisionTree, TinyNeuralNetwork), compression (INT8 quant, pruning), TFLite export
   deploy/     → C code generation (weights header + inference source)
 scripts/      → run_pipeline.py (CLI entry point)
@@ -47,10 +47,11 @@ pytest tests/test_models.py -v
 ## Conventions
 
 - **Classification modes**: Binary (normal vs attack) and multi-class (Normal=0, DoS=1, Fuzzy=2, Gear=3, RPM=4)
-- **Feature matrix**: Always 43 columns — do not change column order without updating C export
+- **Feature matrix**: Always 46 columns — do not change column order without updating C export
 - **Neural net arch**: Input→Dense(32,ReLU)→Dense(16,ReLU)→Output (sigmoid binary / softmax multi-class)
 - **Quantization**: Symmetric min-max INT8, per-layer scale factors stored as `#define` in C header
-- **Generated C code**: `tiny_ids_weights.h` (static const int8_t arrays) + `tiny_ids_inference.c` (tiny_ids_predict function)
+- **Generated C code**: Per-model files (`tiny_ids_tnn_*.h/.c`, `tiny_ids_lr_*.h/.c`, `tiny_ids_dt_*.h/.c`) with `*_predict` functions
+- **C export**: All 3 models (TNN, LR, DT) can be exported to C via `--export-model` flag
 - **Tests**: Use `pytest.fixture(scope="module")` for expensive setup, `tmp_path` for file I/O tests
 
 ## Code Style
@@ -64,7 +65,7 @@ pytest tests/test_models.py -v
 
 - **Memory budget**: Models must stay tiny — NN ~0.8KB INT8, DT ~2KB, LR ~1KB
 - **No dynamic allocation in C output**: All arrays are static const, stack-based inference
-- **Feature order matters**: The C inference code assumes a fixed 43-element input vector order matching `build_feature_matrix()` output
+- **Feature order matters**: The C inference code assumes a fixed 46-element input vector order matching `build_feature_matrix()` output
 - **INT8 range**: Quantized weights must be in [-128, 127]
 - **TFLite calibration**: `export_to_tflite()` uses representative dataset for full-integer quantization
 

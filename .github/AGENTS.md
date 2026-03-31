@@ -1,10 +1,30 @@
 # AGENTS.md — tiny-can-ids
 
-Instructions for AI coding agents (GitHub Copilot, etc.) working on this repository.
+Instructions for AI coding agents (GitHub Copilot, Claude, etc.) working on this repository.
 
 ## Project Summary
 
 TinyML CAN bus intrusion detection system. Pipeline: raw CAN data → feature engineering → model training → INT8 quantization → C code for ARM Cortex-M.
+
+## Agent Roles
+
+### Copilot Agent (VS Code)
+
+- Use prompt files in `.github/prompts/` for structured workflows
+- Follow `.github/copilot-instructions.md` for project context
+- Prefer `agent` mode for multi-step tasks (test, review, pipeline, etc.)
+
+### Claude Agent (Claude Code / CLI)
+
+- Use slash commands in `.claude/commands/` for structured workflows
+- Follow `CLAUDE.md` for project context, conventions, and gotchas
+- Hooks in `.claude/settings.json` enforce safety (pre-commit tests, artifact validation)
+
+### CI Agent (GitHub Actions)
+
+- Workflow in `.github/workflows/ci.yml` runs tests + pipeline smoke on push/PR
+- Matrix: Python 3.9, 3.11, 3.12
+- Pipeline smoke verifies output artifacts exist
 
 ## Build & Test
 
@@ -12,6 +32,19 @@ TinyML CAN bus intrusion detection system. Pipeline: raw CAN data → feature en
 pip install -e ".[dev]"
 pytest tests/ -v
 python -m scripts.run_pipeline --output-dir output/ --window-size 20 --epochs 5
+```
+
+## Helper Scripts
+
+```bash
+# Validate generated C code for embedded compliance
+python .github/scripts/validate_c_output.py --output-dir output/
+
+# Check model sizes against memory budget
+python .github/scripts/check_model_size.py --output-dir output/
+
+# Run full local CI (tests + pipeline + validation)
+python .github/scripts/local_ci.py
 ```
 
 ## Critical Constraints
