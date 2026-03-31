@@ -26,9 +26,15 @@ logger = logging.getLogger(__name__)
 _PAYLOAD_COLS = [f"Data{i}" for i in range(8)]
 
 
+def _compute_top_ids(df: pd.DataFrame, k: int = 20) -> list:
+    """Return the *k* most common CAN IDs in *df*."""
+    return df["ID"].value_counts().head(k).index.tolist()
+
+
 def extract_id_frequency_features(
     df: pd.DataFrame,
     window_size: int = 100,
+    top_ids: list | None = None,
 ) -> np.ndarray:
     """Compute ID-frequency features over rolling windows.
 
@@ -43,13 +49,16 @@ def extract_id_frequency_features(
     Args:
         df: Preprocessed CAN DataFrame.
         window_size: Number of frames per window.
+        top_ids: Pre-computed list of top-K CAN IDs.  If *None*, computed
+            from *df*.
 
     Returns:
         2-D array of shape ``(n_windows, 22)``: 20 ID frequency bins +
         "other" bucket + entropy.
     """
     top_k = 20
-    top_ids = df["ID"].value_counts().head(top_k).index.tolist()
+    if top_ids is None:
+        top_ids = _compute_top_ids(df, k=top_k)
     n = len(df)
     n_windows = max(1, n // window_size)
     features = []
@@ -152,13 +161,73 @@ def extract_payload_features(
     return np.array(features, dtype=np.float32)
 
 
+def extract_rate_and_novelty_features(
+    df: pd.DataFrame,
+    window_size: int = 100,
+    top_ids: list | None = None,
+) -> np.ndarray:
+    """Compute CAN-domain rate and ID novelty features per window.
+
+    For each window of *window_size* consecutive frames, compute:
+
+    * **Message rate** – frames per second in the window.  Highly
+      discriminative for DoS flooding attacks (10-100x normal rate).
+    * **Unique ID count** – number of distinct CAN IDs, normalised by
+      window size.  Captures Fuzzy attacks that inject random IDs.
+    * **New ID ratio** – fraction of unique IDs in the window that do not
+      appear in the global *top_ids* set.  Captures gear/RPM spoofing
+      attacks that inject specific unusual IDs.
+
+    Args:
+        df: Preprocessed CAN DataFrame.
+        window_size: Number of frames per window.
+        top_ids: Pre-computed list of top-K CAN IDs.  If *None*, computed
+            from *df*.
+
+    Returns:
+        2-D array of shape ``(n_windows, 3)``.
+    """
+    if top_ids is None:
+        top_ids = _compute_top_ids(df, k=20)
+
+    top_set = set(top_ids)
+    timestamps = df["Timestamp"].to_numpy(dtype=np.float64)
+    ids = df["ID"].to_numpy()
+    n = len(df)
+    n_windows = max(1, n // window_size)
+    features = np.zeros((n_windows, 3), dtype=np.float32)
+
+    for w in range(n_windows):
+        start = w * window_size
+        end = (w + 1) * window_size
+        win_ts = timestamps[start:end]
+        win_ids = ids[start:end]
+
+        # Message rate (frames / second)
+        time_span = win_ts[-1] - win_ts[0] if len(win_ts) > 1 else 1e-6
+        features[w, 0] = len(win_ts) / max(time_span, 1e-6)
+
+        # Unique ID count (normalised)
+        unique_ids = set(win_ids)
+        features[w, 1] = len(unique_ids) / window_size
+
+        # New ID ratio
+        if len(unique_ids) > 0:
+            new_ids = sum(1 for uid in unique_ids if uid not in top_set)
+            features[w, 2] = new_ids / len(unique_ids)
+
+    return features
+
+
 def build_feature_matrix(
     df: pd.DataFrame,
     window_size: int = 100,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build the full feature matrix and label vector.
 
-    Concatenates ID-frequency, timing, and payload features for each window.
+    Concatenates ID-frequency, timing, payload, and rate/novelty features
+    for each window.  The resulting feature vector has **46** columns:
+    22 (ID freq) + 4 (timing) + 17 (payload) + 3 (rate & novelty).
 
     For **binary** labels (0/1), the window label is 1 (attack) if *any*
     frame in the window is an attack frame, otherwise 0 (normal).
@@ -174,14 +243,18 @@ def build_feature_matrix(
     Returns:
         Tuple ``(X, y)`` where:
 
-        * ``X`` has shape ``(n_windows, n_features)`` (float32).
+        * ``X`` has shape ``(n_windows, 46)`` (float32).
         * ``y`` has shape ``(n_windows,)`` (int).
     """
-    freq = extract_id_frequency_features(df, window_size)
+    top_ids = _compute_top_ids(df, k=20)
+    freq = extract_id_frequency_features(df, window_size, top_ids=top_ids)
     timing = extract_timing_features(df, window_size)
     payload = extract_payload_features(df, window_size)
+    rate_novelty = extract_rate_and_novelty_features(
+        df, window_size, top_ids=top_ids
+    )
 
-    X = np.concatenate([freq, timing, payload], axis=1)
+    X = np.concatenate([freq, timing, payload, rate_novelty], axis=1)
 
     labels = df["label"].to_numpy()
     n_windows = X.shape[0]

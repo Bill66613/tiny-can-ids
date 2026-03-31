@@ -25,6 +25,7 @@ def train_logistic_regression(
     y_train: np.ndarray,
     C: float = 1.0,
     max_iter: int = 1000,
+    class_weight: str | dict | None = "balanced",
     **kwargs: Any,
 ) -> LogisticRegression:
     """Train a logistic regression classifier.
@@ -34,13 +35,19 @@ def train_logistic_regression(
         y_train: Training labels (0 = normal, 1 = attack).
         C: Inverse of regularisation strength.
         max_iter: Maximum number of solver iterations.
+        class_weight: Weights associated with classes.  ``"balanced"``
+            (default) automatically adjusts weights inversely proportional
+            to class frequencies, which is important for imbalanced CAN
+            bus data (typically 95%+ normal frames).
         **kwargs: Additional keyword arguments forwarded to
             :class:`~sklearn.linear_model.LogisticRegression`.
 
     Returns:
         Fitted :class:`~sklearn.linear_model.LogisticRegression` model.
     """
-    model = LogisticRegression(C=C, max_iter=max_iter, **kwargs)
+    model = LogisticRegression(
+        C=C, max_iter=max_iter, class_weight=class_weight, **kwargs
+    )
     model.fit(X_train, y_train)
     logger.info("Logistic regression trained – coef shape: %s", model.coef_.shape)
     return model
@@ -51,6 +58,7 @@ def train_decision_tree(
     y_train: np.ndarray,
     max_depth: int = 5,
     min_samples_leaf: int = 5,
+    class_weight: str | dict | None = "balanced",
     **kwargs: Any,
 ) -> DecisionTreeClassifier:
     """Train a shallow decision tree classifier.
@@ -63,6 +71,9 @@ def train_decision_tree(
         y_train: Training labels.
         max_depth: Maximum tree depth.
         min_samples_leaf: Minimum number of samples at a leaf node.
+        class_weight: Weights associated with classes.  ``"balanced"``
+            (default) automatically adjusts weights inversely proportional
+            to class frequencies.
         **kwargs: Additional keyword arguments forwarded to
             :class:`~sklearn.tree.DecisionTreeClassifier`.
 
@@ -70,7 +81,10 @@ def train_decision_tree(
         Fitted :class:`~sklearn.tree.DecisionTreeClassifier` model.
     """
     model = DecisionTreeClassifier(
-        max_depth=max_depth, min_samples_leaf=min_samples_leaf, **kwargs
+        max_depth=max_depth,
+        min_samples_leaf=min_samples_leaf,
+        class_weight=class_weight,
+        **kwargs,
     )
     model.fit(X_train, y_train)
     logger.info(
@@ -160,6 +174,7 @@ class TinyNeuralNetwork:
         batch_size: int = 32,
         validation_split: float = 0.1,
         verbose: int = 0,
+        balance_classes: bool = False,
     ) -> "TinyNeuralNetwork":
         """Train the neural network.
 
@@ -170,17 +185,30 @@ class TinyNeuralNetwork:
             batch_size: Mini-batch size.
             validation_split: Fraction of training data used for validation.
             verbose: Keras verbosity level.
+            balance_classes: If *True*, compute sample weights inversely
+                proportional to class frequencies to handle imbalanced CAN
+                bus data.
 
         Returns:
             ``self`` for method chaining.
         """
-        self._model.fit(
-            X_train.astype(np.float32),
-            y_train.astype(np.float32),
+        fit_kwargs: dict = dict(
             epochs=epochs,
             batch_size=batch_size,
             validation_split=validation_split,
             verbose=verbose,
+        )
+        if balance_classes:
+            from sklearn.utils.class_weight import compute_sample_weight
+
+            fit_kwargs["sample_weight"] = compute_sample_weight(
+                "balanced", y_train
+            )
+
+        self._model.fit(
+            X_train.astype(np.float32),
+            y_train.astype(np.float32),
+            **fit_kwargs,
         )
         logger.info("TinyNeuralNetwork training complete")
         return self

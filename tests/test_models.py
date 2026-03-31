@@ -13,6 +13,8 @@ from can_ids.models.compress import (
     quantize_weights,
     ModelQuantizer,
     prune_decision_tree,
+    quantize_logistic_regression,
+    export_decision_tree_structure,
 )
 
 
@@ -191,3 +193,116 @@ def test_model_quantizer_footprint_smaller_than_float(trained_tnn):
     )
     fp_float32 = total_params * 4
     assert fp_int8 < fp_float32
+
+
+# ---------------------------------------------------------------------------
+# Class imbalance handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def imbalanced_dataset():
+    """Dataset with 90/10 class split to test balanced weights."""
+    X, y = make_classification(
+        n_samples=400,
+        n_features=20,
+        n_informative=10,
+        n_redundant=5,
+        weights=[0.9, 0.1],
+        random_state=42,
+    )
+    return X.astype(np.float32), y.astype(np.int32)
+
+
+def test_logistic_regression_balanced_weights(imbalanced_dataset):
+    X, y = imbalanced_dataset
+    model = train_logistic_regression(X, y)
+    preds = model.predict(X)
+    # With a 90/10 split, random guessing gives ~0.10 minority recall.
+    # Require a modest improvement over random while avoiding flaky thresholds.
+    minority_mask = y == 1
+    minority_recall = (preds[minority_mask] == 1).mean()
+    assert minority_recall > 0.15, f"Minority recall {minority_recall:.2f} too low"
+
+
+def test_decision_tree_balanced_weights(imbalanced_dataset):
+    X, y = imbalanced_dataset
+    model = train_decision_tree(X, y, max_depth=5)
+    preds = model.predict(X)
+    # Same rationale as logistic regression: just above random baseline (0.10).
+    minority_mask = y == 1
+    minority_recall = (preds[minority_mask] == 1).mean()
+    assert minority_recall > 0.15, f"Minority recall {minority_recall:.2f} too low"
+
+
+def test_tnn_balanced_classes(imbalanced_dataset):
+    X, y = imbalanced_dataset
+    tnn = TinyNeuralNetwork(input_dim=X.shape[1], hidden_units=(16, 8))
+    tnn.fit(X, y, epochs=10, verbose=0, balance_classes=True)
+    preds = tnn.predict(X)
+    # Should not predict all-majority-class
+    assert len(np.unique(preds)) > 1, "TNN predicted only one class"
+
+
+# ---------------------------------------------------------------------------
+# LR quantization
+# ---------------------------------------------------------------------------
+
+
+def test_quantize_lr_shape(binary_dataset):
+    X, y = binary_dataset
+    model = train_logistic_regression(X, y)
+    qlr = quantize_logistic_regression(model, bits=8)
+    assert qlr.coef_q.shape == model.coef_.shape
+    assert qlr.intercept_q.shape == model.intercept_.shape
+
+
+def test_quantize_lr_range(binary_dataset):
+    X, y = binary_dataset
+    model = train_logistic_regression(X, y)
+    qlr = quantize_logistic_regression(model, bits=8)
+    assert qlr.coef_q.min() >= -127
+    assert qlr.coef_q.max() <= 127
+
+
+def test_quantize_lr_memory_footprint(binary_dataset):
+    X, y = binary_dataset
+    model = train_logistic_regression(X, y)
+    qlr = quantize_logistic_regression(model, bits=8)
+    fp = qlr.memory_footprint_bytes()
+    assert fp > 0
+    # INT8 should be smaller than float32 original
+    float32_size = (model.coef_.size + model.intercept_.size) * 4
+    assert fp < float32_size
+
+
+# ---------------------------------------------------------------------------
+# Decision tree structure export
+# ---------------------------------------------------------------------------
+
+
+def test_export_dt_structure_node_count(binary_dataset):
+    X, y = binary_dataset
+    model = train_decision_tree(X, y, max_depth=5)
+    edt = export_decision_tree_structure(model)
+    assert edt.n_nodes == model.tree_.node_count
+
+
+def test_export_dt_structure_leaf_classes(binary_dataset):
+    X, y = binary_dataset
+    model = train_decision_tree(X, y, max_depth=5)
+    edt = export_decision_tree_structure(model)
+    # Leaf classes should be valid class indices
+    leaf_mask = edt.leaf_class >= 0
+    assert leaf_mask.any(), "No leaf nodes found"
+    assert set(edt.leaf_class[leaf_mask].tolist()).issubset(set(range(edt.n_classes)))
+
+
+def test_export_dt_structure_memory(binary_dataset):
+    X, y = binary_dataset
+    model = train_decision_tree(X, y, max_depth=5)
+    edt = export_decision_tree_structure(model)
+    fp = edt.memory_footprint_bytes()
+    assert fp > 0
+    # With max_depth=5, should be well under 2KB
+    assert fp < 2048

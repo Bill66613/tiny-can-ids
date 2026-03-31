@@ -140,6 +140,161 @@ class ModelQuantizer:
         return total
 
 
+@dataclass
+class QuantizedLR:
+    """Holds INT8-quantized parameters for a logistic regression model.
+
+    For binary classification ``coef_q`` has shape ``(1, n_features)`` and
+    ``intercept_q`` has shape ``(1,)``.  For multi-class they expand to
+    ``(n_classes, n_features)`` and ``(n_classes,)`` respectively.
+    """
+
+    coef_q: np.ndarray
+    coef_scale: float
+    intercept_q: np.ndarray
+    intercept_scale: float
+    n_features: int
+    n_classes: int
+    bits: int = 8
+
+    def memory_footprint_bytes(self) -> int:
+        """Estimated model size in bytes after quantization."""
+        bpe = max(1, self.bits // 8)
+        return (self.coef_q.size + self.intercept_q.size) * bpe
+
+
+def quantize_logistic_regression(
+    model: Any,
+    bits: int = 8,
+) -> QuantizedLR:
+    """Quantize a fitted scikit-learn LogisticRegression model.
+
+    Uses symmetric min-max quantization on the coefficient matrix and
+    intercept vector, identical to the approach used for TNN dense layers.
+
+    Args:
+        model: A fitted :class:`~sklearn.linear_model.LogisticRegression`.
+        bits: Target bit-width (default 8).
+
+    Returns:
+        A :class:`QuantizedLR` containing INT8 coefficients and scales.
+    """
+    coef = model.coef_.astype(np.float32)
+    intercept = model.intercept_.astype(np.float32)
+    coef_q, coef_scale, _ = quantize_weights(coef, bits)
+    intercept_q, intercept_scale, _ = quantize_weights(intercept, bits)
+    n_classes = coef.shape[0] if coef.shape[0] > 1 else 2
+    qlr = QuantizedLR(
+        coef_q=coef_q,
+        coef_scale=coef_scale,
+        intercept_q=intercept_q,
+        intercept_scale=intercept_scale,
+        n_features=coef.shape[1],
+        n_classes=n_classes,
+        bits=bits,
+    )
+    logger.info(
+        "Quantized LR: coef %s, footprint %d bytes",
+        coef_q.shape,
+        qlr.memory_footprint_bytes(),
+    )
+    return qlr
+
+
+@dataclass
+class ExportedDecisionTree:
+    """Array-based representation of a decision tree for C export.
+
+    Stores parallel arrays that support a simple while-loop tree traversal
+    in generated C code.  Internal nodes have ``children_left[i] != -1``;
+    leaf nodes store the predicted class in ``leaf_class[i]``.
+    """
+
+    feature_index: np.ndarray
+    threshold: np.ndarray
+    children_left: np.ndarray
+    children_right: np.ndarray
+    leaf_class: np.ndarray
+    n_nodes: int
+    n_classes: int
+    max_depth: int
+
+    def memory_footprint_bytes(self) -> int:
+        """Estimated C-side memory footprint in bytes.
+
+        feature_index, children_left, children_right, leaf_class are int8
+        (1 byte each), threshold is float32 (4 bytes).
+        """
+        return self.n_nodes * (1 + 4 + 1 + 1 + 1)  # 8 bytes per node
+
+
+def export_decision_tree_structure(
+    model: DecisionTreeClassifier,
+) -> ExportedDecisionTree:
+    """Extract a decision tree into parallel arrays for C export.
+
+    Args:
+        model: A fitted :class:`~sklearn.tree.DecisionTreeClassifier`.
+
+    Returns:
+        An :class:`ExportedDecisionTree` with arrays ready for C code
+        generation.
+
+    Raises:
+        ValueError: If the tree has more than 127 nodes (does not fit in
+            int8 index fields).
+    """
+    tree = model.tree_
+    n_nodes = tree.node_count
+
+    if n_nodes > 127:
+        raise ValueError(
+            f"Tree has {n_nodes} nodes which exceeds int8 capacity (127). "
+            f"Reduce max_depth or increase min_samples_leaf."
+        )
+
+    feature_index = tree.feature.astype(np.int8)
+    threshold = tree.threshold.astype(np.float32)
+    children_left = tree.children_left.astype(np.int8)
+    children_right = tree.children_right.astype(np.int8)
+
+    # For each node, compute the majority class from tree.value
+    leaf_class = np.full(n_nodes, -1, dtype=np.int8)
+    for i in range(n_nodes):
+        if children_left[i] == -1:  # leaf node (sklearn uses -1 sentinel)
+            # tree.value[i] has shape (1, n_classes) – counts per class
+            leaf_class[i] = np.argmax(tree.value[i].ravel())
+
+    # Mark internal node feature_index: sklearn uses -2 for leaves,
+    # remap to -1 for consistency with our children sentinel
+    feature_index[feature_index == -2] = -1
+
+    if isinstance(tree.n_classes, (np.ndarray, list, tuple)):
+        # For multi-output trees sklearn stores per-output class counts; we
+        # currently support only single-output classification, so take index 0.
+        n_classes = int(tree.n_classes[0])
+    else:
+        n_classes = int(tree.n_classes)
+
+    edt = ExportedDecisionTree(
+        feature_index=feature_index,
+        threshold=threshold,
+        children_left=children_left,
+        children_right=children_right,
+        leaf_class=leaf_class,
+        n_nodes=n_nodes,
+        n_classes=int(n_classes),
+        max_depth=model.get_depth(),
+    )
+    logger.info(
+        "Exported DT: %d nodes, depth %d, footprint %d bytes",
+        n_nodes,
+        edt.max_depth,
+        edt.memory_footprint_bytes(),
+    )
+    return edt
+
+
 def prune_decision_tree(
     model: DecisionTreeClassifier,
     X_train: np.ndarray,

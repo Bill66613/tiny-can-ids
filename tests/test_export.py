@@ -7,11 +7,24 @@ import numpy as np
 import pytest
 from sklearn.datasets import make_classification
 
-from can_ids.models.classifiers import TinyNeuralNetwork
-from can_ids.models.compress import ModelQuantizer
+from can_ids.models.classifiers import (
+    TinyNeuralNetwork,
+    train_logistic_regression,
+    train_decision_tree,
+)
+from can_ids.models.compress import (
+    ModelQuantizer,
+    quantize_logistic_regression,
+    export_decision_tree_structure,
+)
 from can_ids.deploy.c_export import (
     export_weights_to_c_header,
     generate_inference_c_code,
+    export_lr_to_c_header,
+    generate_lr_inference_c_code,
+    export_dt_to_c_header,
+    generate_dt_inference_c_code,
+    export_model_to_c,
 )
 
 
@@ -167,3 +180,164 @@ def test_tflite_inference_shape(tiny_dataset, trained_tnn):
     preds = run_tflite_inference(tflite_bytes, X[:10])
     assert preds.shape == (10,)
     assert set(np.unique(preds)).issubset({0, 1})
+
+
+# ---------------------------------------------------------------------------
+# LR C export – fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def trained_lr(tiny_dataset):
+    X, y = tiny_dataset
+    return train_logistic_regression(X, y)
+
+
+@pytest.fixture(scope="module")
+def quantized_lr(trained_lr):
+    return quantize_logistic_regression(trained_lr, bits=8)
+
+
+# ---------------------------------------------------------------------------
+# LR C header tests
+# ---------------------------------------------------------------------------
+
+
+def test_lr_c_header_created(tmp_path, quantized_lr):
+    out = export_lr_to_c_header(quantized_lr, tmp_path / "lr_weights")
+    assert out.exists()
+    assert out.suffix == ".h"
+
+
+def test_lr_c_header_contains_coef_array(tmp_path, quantized_lr):
+    out = export_lr_to_c_header(quantized_lr, tmp_path / "lr_weights2")
+    content = out.read_text()
+    assert "int8_t" in content
+    assert "_coef" in content
+
+
+def test_lr_c_header_scale_defines(tmp_path, quantized_lr):
+    out = export_lr_to_c_header(quantized_lr, tmp_path / "lr_weights3")
+    content = out.read_text()
+    assert "COEF_SCALE" in content
+    assert "INTERCEPT_SCALE" in content
+
+
+# ---------------------------------------------------------------------------
+# LR C inference tests
+# ---------------------------------------------------------------------------
+
+
+def test_lr_c_inference_created(tmp_path, quantized_lr):
+    out = generate_lr_inference_c_code(quantized_lr, tmp_path / "lr_inference")
+    assert out.exists()
+    assert out.suffix == ".c"
+
+
+def test_lr_c_inference_function_signature(tmp_path, quantized_lr):
+    out = generate_lr_inference_c_code(quantized_lr, tmp_path / "lr_inference2")
+    content = out.read_text()
+    assert "tiny_ids_lr_predict" in content
+
+
+def test_lr_c_inference_dot_product(tmp_path, quantized_lr):
+    out = generate_lr_inference_c_code(quantized_lr, tmp_path / "lr_inference3")
+    content = out.read_text()
+    # Should contain a loop computing the dot product
+    assert "for" in content
+    assert "_coef[" in content
+
+
+# ---------------------------------------------------------------------------
+# DT C export – fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def trained_dt(tiny_dataset):
+    X, y = tiny_dataset
+    return train_decision_tree(X, y, max_depth=5)
+
+
+@pytest.fixture(scope="module")
+def exported_dt(trained_dt):
+    return export_decision_tree_structure(trained_dt)
+
+
+# ---------------------------------------------------------------------------
+# DT C header tests
+# ---------------------------------------------------------------------------
+
+
+def test_dt_c_header_created(tmp_path, exported_dt):
+    out = export_dt_to_c_header(exported_dt, tmp_path / "dt_weights")
+    assert out.exists()
+    assert out.suffix == ".h"
+
+
+def test_dt_c_header_contains_arrays(tmp_path, exported_dt):
+    out = export_dt_to_c_header(exported_dt, tmp_path / "dt_weights2")
+    content = out.read_text()
+    assert "feature_index" in content
+    assert "threshold" in content
+    assert "children_left" in content
+    assert "children_right" in content
+    assert "leaf_class" in content
+
+
+def test_dt_c_header_node_count(tmp_path, exported_dt):
+    out = export_dt_to_c_header(exported_dt, tmp_path / "dt_weights3")
+    content = out.read_text()
+    assert "N_NODES" in content
+
+
+# ---------------------------------------------------------------------------
+# DT C inference tests
+# ---------------------------------------------------------------------------
+
+
+def test_dt_c_inference_created(tmp_path, exported_dt):
+    out = generate_dt_inference_c_code(exported_dt, tmp_path / "dt_inference")
+    assert out.exists()
+    assert out.suffix == ".c"
+
+
+def test_dt_c_inference_traversal_loop(tmp_path, exported_dt):
+    out = generate_dt_inference_c_code(exported_dt, tmp_path / "dt_inference2")
+    content = out.read_text()
+    assert "while" in content
+    assert "children_left" in content
+
+
+def test_dt_c_inference_function_signature(tmp_path, exported_dt):
+    out = generate_dt_inference_c_code(exported_dt, tmp_path / "dt_inference3")
+    content = out.read_text()
+    assert "tiny_ids_dt_predict" in content
+
+
+# ---------------------------------------------------------------------------
+# Unified export dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_unified_export_tnn(tmp_path, trained_tnn):
+    header, source = export_model_to_c(trained_tnn, "tnn", tmp_path)
+    assert header.exists() and header.suffix == ".h"
+    assert source.exists() and source.suffix == ".c"
+
+
+def test_unified_export_lr(tmp_path, trained_lr):
+    header, source = export_model_to_c(trained_lr, "lr", tmp_path)
+    assert header.exists() and header.suffix == ".h"
+    assert source.exists() and source.suffix == ".c"
+
+
+def test_unified_export_dt(tmp_path, trained_dt):
+    header, source = export_model_to_c(trained_dt, "dt", tmp_path)
+    assert header.exists() and header.suffix == ".h"
+    assert source.exists() and source.suffix == ".c"
+
+
+def test_unified_export_invalid_type(tmp_path, trained_tnn):
+    with pytest.raises(ValueError, match="Unknown model_type"):
+        export_model_to_c(trained_tnn, "invalid", tmp_path)

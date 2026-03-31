@@ -8,6 +8,7 @@ from can_ids.features.engineer import (
     extract_id_frequency_features,
     extract_timing_features,
     extract_payload_features,
+    extract_rate_and_novelty_features,
     build_feature_matrix,
 )
 
@@ -64,8 +65,8 @@ def test_build_feature_matrix_shapes(preprocessed_df):
     n_windows = len(preprocessed_df) // 50
     assert X.shape[0] == n_windows
     assert y.shape[0] == n_windows
-    # Total features: 22 (id freq) + 4 (timing) + 17 (payload)
-    assert X.shape[1] == 43, X.shape[1]
+    # Total features: 22 (id freq) + 4 (timing) + 17 (payload) + 3 (rate & novelty)
+    assert X.shape[1] == 46, X.shape[1]
 
 
 def test_build_feature_matrix_labels_binary(preprocessed_df):
@@ -82,3 +83,30 @@ def test_build_feature_matrix_no_nan(preprocessed_df):
 def test_build_feature_matrix_has_attack_windows(preprocessed_df):
     _, y = build_feature_matrix(preprocessed_df, window_size=50)
     assert y.sum() > 0, "Expected at least one attack window"
+
+
+# ---------------------------------------------------------------------------
+# Rate and novelty features
+# ---------------------------------------------------------------------------
+
+
+def test_rate_novelty_features_shape(preprocessed_df):
+    feats = extract_rate_and_novelty_features(preprocessed_df, window_size=50)
+    n_windows = len(preprocessed_df) // 50
+    assert feats.shape == (n_windows, 3), feats.shape
+
+
+def test_rate_novelty_features_dtype(preprocessed_df):
+    feats = extract_rate_and_novelty_features(preprocessed_df, window_size=50)
+    assert feats.dtype == np.float32
+
+
+def test_rate_novelty_features_non_negative(preprocessed_df):
+    feats = extract_rate_and_novelty_features(preprocessed_df, window_size=50)
+    assert (feats >= 0).all()
+
+
+def test_rate_novelty_message_rate_positive(preprocessed_df):
+    feats = extract_rate_and_novelty_features(preprocessed_df, window_size=50)
+    # Message rate should be > 0 for all windows with valid timestamps
+    assert (feats[:, 0] > 0).all()
