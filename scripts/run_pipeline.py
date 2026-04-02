@@ -4,6 +4,12 @@ Usage::
 
     python scripts/run_pipeline.py [--output-dir OUTPUT_DIR]
 
+    # Use a config file (or auto-detect pipeline.toml in cwd):
+    python scripts/run_pipeline.py --config my_config.toml
+
+    # CLI arguments override config file values:
+    python scripts/run_pipeline.py --config my_config.toml --epochs 50
+
     # Train on all 4 attack types from the Car Hacking Dataset:
     python scripts/run_pipeline.py --dataset-dir path/to/Car-Hacking-Dataset
 
@@ -32,6 +38,14 @@ import sys
 
 from pathlib import Path
 
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]
+
 import numpy as np
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.model_selection import train_test_split
@@ -44,9 +58,50 @@ logging.basicConfig(
 logger = logging.getLogger("pipeline")
 
 
+def _load_config(path: Path) -> dict:
+    """Load a TOML config file and return it as a flat dict."""
+    if tomllib is None:
+        logger.warning(
+            "Config file found but TOML support unavailable (Python < 3.11). "
+            "Install tomli: pip install tomli"
+        )
+        return {}
+    with open(path, "rb") as f:
+        return tomllib.load(f)
+
+
+# Hardcoded fallback defaults (layer 3 — lowest priority).
+_DEFAULTS: dict = {
+    "dataset": None,
+    "dataset_dir": None,
+    "max_rows_per_file": None,
+    "output_dir": "output",
+    "window_size": 50,
+    "epochs": 20,
+    "no_tflite": False,
+    "export_model": "tnn",
+}
+
+# TOML key → argparse dest mapping (handles hyphens vs underscores).
+_TOML_KEY_MAP: dict[str, str] = {
+    "dataset-dir": "dataset_dir",
+    "max-rows-per-file": "max_rows_per_file",
+    "output-dir": "output_dir",
+    "window-size": "window_size",
+    "export-model": "export_model",
+    "no-tflite": "no_tflite",
+}
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Tiny CAN Intrusion Detection System – end-to-end pipeline"
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to a TOML config file. If omitted, looks for "
+        "'pipeline.toml' in the current directory.",
     )
     parser.add_argument(
         "--dataset",
@@ -67,35 +122,67 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        default="output",
+        default=None,
         help="Directory for exported artifacts (default: ./output).",
     )
     parser.add_argument(
         "--window-size",
         type=int,
-        default=50,
+        default=None,
         help="Sliding window size for feature engineering (default: 50).",
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=20,
+        default=None,
         help="Training epochs for the Tiny Neural Network (default: 20).",
     )
     parser.add_argument(
         "--no-tflite",
-        action="store_true",
+        action="store_const",
+        const=True,
+        default=None,
         help="Skip TFLite export (useful when TensorFlow is not installed).",
     )
     parser.add_argument(
         "--export-model",
-        default="tnn",
+        default=None,
         choices=["all", "best", "tnn", "lr", "dt"],
         help="Which model(s) to export to C code. "
         "'all' exports all three, 'best' picks the highest-F1 model "
         "(default: tnn).",
     )
-    return parser.parse_args()
+    cli_args = parser.parse_args()
+
+    # --- Layer 2: config file ---
+    config: dict = {}
+    config_path = Path(cli_args.config) if cli_args.config else Path("pipeline.toml")
+    if config_path.is_file():
+        logger.info("Loading config from %s", config_path)
+        raw = _load_config(config_path)
+        # Normalise TOML keys to argparse dest names.
+        for k, v in raw.items():
+            dest = _TOML_KEY_MAP.get(k, k.replace("-", "_"))
+            config[dest] = v
+    elif cli_args.config:
+        # User explicitly passed --config but file doesn't exist.
+        parser.error(f"Config file not found: {config_path}")
+
+    # --- 3-layer merge: CLI > config > hardcoded defaults ---
+    merged = argparse.Namespace()
+    for key, fallback in _DEFAULTS.items():
+        cli_val = getattr(cli_args, key, None)
+        if cli_val is not None:
+            # CLI explicitly provided — highest priority.
+            setattr(merged, key, cli_val)
+        elif key in config:
+            # Config file — middle priority.
+            setattr(merged, key, config[key])
+        else:
+            # Hardcoded default — lowest priority.
+            setattr(merged, key, fallback)
+
+    return merged
 
 
 def main() -> None:
@@ -260,7 +347,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 10. Deployment summary
     # ------------------------------------------------------------------
-    logger.info("Pipeline complete.  Artefacts in: %s", output_dir.resolve())
+    logger.info("Pipeline complete. Artifacts in: %s", output_dir.resolve())
 
 
 def _resolve_export_targets(

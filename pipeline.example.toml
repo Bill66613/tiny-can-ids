@@ -1,0 +1,25 @@
+# Pipeline configuration for tiny-can-ids.
+#
+# Copy this file to `pipeline.toml` and edit to match your setup.
+# The pipeline auto-loads `pipeline.toml` from the working directory,
+# or pass an explicit path with `--config path/to/config.toml`.
+#
+# CLI arguments always take precedence over values defined here.
+
+# --- Data ---
+# dataset     = "path/to/single_attack.csv"      # single CSV (binary mode)
+# dataset_dir = "path/to/Car-Hacking-Dataset"     # directory of CSVs (multi-class)
+# max_rows_per_file = 100000                       # limit rows per CSV (quick experiments)
+
+# --- Output ---
+output_dir = "output"
+
+# --- Feature engineering ---
+window_size = 50
+
+# --- Training ---
+epochs = 20
+
+# --- Export ---
+export_model = "tnn"          # "all" | "best" | "tnn" | "lr" | "dt"
+no_tflite    = false
