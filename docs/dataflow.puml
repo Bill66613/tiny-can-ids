@@ -1,0 +1,40 @@
+@startuml Dataflow
+title Dataflow Pipeline Diagram
+skinparam monochrome true
+skinparam packageStyle rectangle
+left to right direction
+
+package "Data Preparation" {
+    [Raw CAN Data] --> [Preprocessing]
+    [Preprocessing] --> [Labeled Dataset]
+}
+
+package "Intelligence Extraction" {
+    [Labeled Dataset] --> [Sliding Window]
+    [Sliding Window] --> [46-Feature Vectors] : Entropy / Timing / Hamming
+}
+
+package "Model Optimization" {
+    [46-Feature Vectors] --> [Standard Scaling]
+    
+    package "Machine Learning Training" {
+        [Standard Scaling] --> [Logistic Regression] : Linear Baseline
+        [Standard Scaling] --> [Decision Tree] : If-Else Logic
+        [Standard Scaling] --> [Tiny Neural Network] : Non-linear Patterns
+    }
+
+    [Logistic Regression] --> [Model Evaluation]
+    [Decision Tree] --> [Model Evaluation]
+    [Tiny Neural Network] --> [Model Evaluation]
+
+    [Model Evaluation] --> [INT8 Quantization] : Selection & Compression
+}
+
+package "Artifact Generation" {
+    [INT8 Quantization] --> [Output Folder]
+    folder "Output Folder" {
+        file "C Source/Header"
+        file "TFLite Binary"
+    }
+}
+@enduml
