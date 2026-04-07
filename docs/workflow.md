@@ -73,7 +73,7 @@ Each window will generate **a unique Feature Vector** representing the network's
 
 ### Extracting 46 Specific Features: 
 Each window was analyzed to extract 4 groups of metrics: 
-- **ID Frequency (22 metrics):** Calculates the occurrence rate of the 20 most common IDs and measures network entropy through Shannon Entropy. 
+- **ID Frequency (22 metrics):** Calculates the occurrence rate of the 20 most common IDs, includes one aggregated **other IDs** bucket for all remaining IDs, and measures network entropy through Shannon Entropy. 
 
 - **Time (4 metrics):** Calculates the **mean**, standard deviation (**Std**), **min**, and **max** of the time interval between messages ($\Delta t$) to detect attacks. 
 - **Payload Content (17 metrics):** Statistically calculates the mean/standard deviation of each data byte and calculates **Hamming Weight** (total number of '1' bits). 
@@ -137,7 +137,7 @@ The system uses standard metrics to measure model reliability:
 - **Classification Report:** A detailed table for each class (Normal, DoS, Fuzzy, etc.) to show which type of attack the model is weak against.
 
 ### Comparison Table
-The ``run_pipeline.py`` source code automatically outputs a summary table to give you an overview:
+The ``run_pipeline.py`` source code automatically outputs a summary table to give  overview:
 
 - Lists all models (LR, DT, TNN) along with their Acc, F1, and Size metrics.
 
@@ -147,40 +147,99 @@ The ``run_pipeline.py`` source code automatically outputs a summary table to giv
 
 ## 7. Quantize the Tiny Neural Network (INT8)
 ### Data Type Conversion
-- **Concept:** Converts weights and biases from floating-point numbers (float32, 4 bytes) to integers (int8, 1 byte).
+Quantization is the process of converting model parameters (Weight) from floating-point number (float32, using 4 bytes/element) to lower-format integers (int8, using only 1 byte/element).
 
-- **Purpose:** Reduces model size by 4 times (from ~3 KB to ~0.8 KB).
+- **Purpose:** Reduce model size by 4 times (e.g., from ~3 KB to ~0.75 KB).
+
+- **Significance:** Helps the model "break" on microcontrollers with extremely limited Flash memory (such as ARM Cortex-M0/M3 or AURIX).
 
 ### Symmetric Quantization 
-- **Mechanism:** Finds the largest absolute value ($max_val$) of the weights in each class. 
-- **Scale Factor:** Calculates a scale value to map the range of real numbers to the range of integers from -127 to 127. 
+- **Mechanism:** This mechanism maps the range of real numbers to the range of integers symmetrically around the zero point.
+- **Scale Factor:** Find the largest absolute value $|maxval|$ of the real weights. The Scale factor is calculated to fit the range $[-maxval, maxval]$ into the integer range $[-127, 127]$.
+$$Scale = \frac{max|Weight_{float32}|}{127}$$
 - **Formula:** $Weight_{int8} = \text{round}(\frac{Weight_{float32}}{Scale})$.
 
-### Embedded Benefits
-- **Saving Flash/RAM:** The quantized model is extremely compact, easily fitting into the limited memory of the MCU.
+- **Zero-point:** In symmetric quantification, the zero point of a real number perfectly matches the zero point of an integer ($Zero\_point = 0$), which speeds up computation because there is no need to add offsets in matrix multiplications.
 
-- **Increased Computational Speed:** Microcontrollers (such as the ARM Cortex-M series) perform integer multiplications faster and consume less power than floating-point multiplications.
+### Essential meaning and practical benefits
+Quantizing isn't just about saving space, it changes how the MCU processes data:
 
-- **Compatibility:** The results of this step will provide static arrays const int8_t for the C file export in the next step.
+#### A. Avoiding Floating Point Units (FPU Avoidance)
+Most microcontrollers do not have a hardware floating point unit (FPU).
+
+- If quantization is not performed, the MCU must use software to simulate floating point calculations, which is extremely slow and energy-intensive.
+
+- After quantization, all calculations become integers (Integer Arithmetic), directly utilizing the chip's ALU, resulting in significantly faster response times (Latency).
+
+#### B. Optimizing Memory Bandwidth
+In each computation cycle, the CPU needs to load weights from Flash memory.
+
+With int8, a 32-bit register of the MCU can load 4 weights (4 bytes) simultaneously, while with float32 only 1 weight can be loaded. This reduces data bottlenecks and increases overall processing speed.
+
+#### C. Reduced Power Efficiency
+Performing integer multiplication consumes significantly less energy than performing floating-point multiplication. This is crucial for automotive ECUs, which prioritize durability and energy efficiency.
+
+### Comparing Quantization Levels
+| Level | Size | Accuracy | Compatibility |
+|--------|-----|----------|----------|
+| **Float32** | 4 Bytes | 99% (original)| Only for powerful chips with FPUs. |
+| **Int16** | 2 Bytes | high (>95%) | Balancing size and precision. |
+| **Int8** | 1 Byte | Fair (~90 - 95%) | Best for embedded systems, fastest speed.
+
+**In conclusion:** The INT8 quantization step is the "key" to transforming a theoretical AI model into a practical solution that can run smoothly on resource-intensive hardware.
 
 ## 8. Export to TFLite (optional)
 This step is for systems that support the TensorFlow Lite Micro library.
 
-- **Conversion:** Use TFLiteConverter to convert the Keras model into a binary .tflite file (flatbuffer).
+### The nature of the data inside .tflite file.
+A .tflite file is not a readable source code but a binary file structured in **FlatBuffers format**. Its contents include:
 
-- **Full-integer Quantization:** Use a representative dataset to align the value ranges, ensuring the model runs entirely in integers for optimal speed.
+- **Execution Graph:** Defines the structure of the neural network layers (Input -> Dense -> ReLU -> Output).
 
-- **Validation:** Run a test of the .tflite model on computer to ensure accuracy is not significantly reduced after conversion.
+- **Quantized Weights:** Contains the model's knowledge parameters as int8 (1 byte) or int16 (2 bytes) instead of floating-point numbers (4 bytes).
+
+- **Metadata:** Contains version information and, in particular, scale factors so the decoder knows how to multiply or divide these integers to simulate the results of floating-point numbers.
+
+### Deployment
+To run a ``.tflite`` file on embedded hardware, the implementation process involves three working components:
+
+1. **Model Loading:** Since the MCU doesn't have an operating system to read the file, the ``.tflite`` file is usually converted into a **C-Array** using the `xxd -i` command to load it directly into ``Flash`` memory.
+
+2. **Interpreter:** Install the **TFLite Micro** library. This library acts as the "engine," reading the schematic in the ``.tflite`` file and performing mathematical calculations.
+
+3. **Tensor Arena:** Declare an empty byte array in **RAM** (called the **Tensor Arena**). This is the space where the interpreter stores intermediate calculation results.
+
+### Validation
+- **Accuracy Check:** Run the ``.tflite`` model on computer using the Python API to compare its accuracy with the original model.
+
+- **Latency & Memory:** Ensure the file size after conversion (e.g., ~0.8 KB for TNN) is within the allowed limits of the target device.
 
 ## 9. Export selected model(s) to C code
 
-This is the most flexible and lightweight implementation method, requiring no external libraries.
+This is the most flexible and lightweight deployment method, allowing AI models to run directly on processing chips without needing to install any additional supporting libraries (such as TensorFlow Lite).
 
-- **Header creation (.h):** Converts the quantified weights (INT8) into static constant arrays (const int8_t). SCALE coefficients are also defined as the ``#define`` macro.
+### What is the nature of the data in .c and .h files?
+Instead of being stored as a difficult-to-read binary file, the model is now documented into familiar C language components:
 
-- **Source creation (.c):** Automatically writes the ``ids_predict()`` function. This function performs matrix multiplication loops (for Neural Networks) or tree traversal loops (for Decision Trees).
+- **Header File (.h):** Quantified weights (INT8) are stored as static arrays (``const int8_t``). Scale coefficients (SCALE) are also predefined using ``#define`` codes.
 
-- **Bare-metal optimization:** The generated source code does not use dynamic memory (malloc), ensuring absolute safety and resource efficiency for chip families such as Infineon AURIX or ARM Cortex-M.
+- **Source File (.c):** Contains "computation formulas". This is the source code that executes prediction functions such as ``tiny_ids_tnn_predict()``. It transforms complex AI operations into simple `for` loops (for matrix multiplication) or ``if-else`` statements (for traversing decision trees).
+
+### Deployment
+
+1. **Integration (Include):** Copy the two .c and .h files into hardware project and add the line #include "model.h" to the main source code.
+
+2. **Input Preparation:** Take the 46 features extracted from the CAN network, perform multiplication/division with the available SCALE coefficients in the .h file to bring the data to the correct format required by the model.
+
+3. **Calling the Prediction Function:** Call the ``predict()`` function (e.g., ``tiny_ids_dt_predict(input_data)``). The returned result will immediately tell whether it is a normal message or an attack.
+
+### Benefit
+
+- **Bare-metal security:** The source code does not use dynamic memory (malloc), completely avoiding memory overflow errors or system crashes. This is especially important for specialized automotive chips like the Infineon AURIX.
+
+- **Maximum speed**: For Decision Tree models, converting to an if-else structure makes the chip process data dozens of times faster than running it through an intermediate decoder.
+
+- **Zero-dependency operation:** If the chip is too weak to support complex mathematical libraries (math.h), replace complex functions like expf with a simple lookup table to ensure the system still runs smoothly.
 
 ## 10. Print deployment summary.
 - **Completion message:** The system prints "Pipeline complete" and displays the absolute path to the output/ directory.
