@@ -64,12 +64,11 @@ For the Sliding Window technique to work correctly, the data must ensure sequent
 - **Missing Value Handling:** Removes rows without Timestamps or compensates for missing zeros in data columns to ensure the input matrix is ​​always complete.
 
 ## 3. Engineer features
-This step is the most crucial stage in converting the data into mathematical features that the AI ​​model can understand using the Sliding Window technique.
-
-### Sliding Window Technique
-Instead of analyzing each message individually, the system groups consecutive messages into a window (default is 50 or 100 frames).
-
-Each window will generate **a unique Feature Vector** representing the network's behavior during that time period.
+This step is the most crucial stage in converting the data into mathematical features that the AI ​​model can understand using a fixed-window segmentation technique.
+### Windowing Technique
+Instead of analyzing each message individually, the system groups consecutive messages into fixed-size windows (default is 50 or 100 frames).
+In the current implementation, these windows are **non-overlapping**: the data is partitioned into consecutive chunks of `window_size` frames rather than using a true sliding window with a configurable stride.
+Each window generates **a unique Feature Vector** representing the network's behavior during that time period.
 
 ### Extracting 46 Specific Features: 
 Each window was analyzed to extract 4 groups of metrics: 
@@ -221,7 +220,7 @@ This is the most flexible and lightweight deployment method, allowing AI models 
 ### What is the nature of the data in .c and .h files?
 Instead of being stored as a difficult-to-read binary file, the model is now documented into familiar C language components:
 
-- **Header File (.h):** Quantified weights (INT8) are stored as static arrays (``const int8_t``). Scale coefficients (SCALE) are also predefined using ``#define`` codes.
+- **Header File (.h):** Quantized weights (INT8) are stored as static arrays (``const int8_t``). Scale coefficients (SCALE) are also predefined using ``#define`` codes.
 
 - **Source File (.c):** Contains "computation formulas". This is the source code that executes prediction functions such as ``tiny_ids_tnn_predict()``. It transforms complex AI operations into simple `for` loops (for matrix multiplication) or ``if-else`` statements (for traversing decision trees).
 
