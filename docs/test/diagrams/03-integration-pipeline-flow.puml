@@ -1,0 +1,63 @@
+@startuml IntegrationPipeline
+!define STYLE_INPUT fill:#FFF3E0,stroke:#E65100,stroke-width:2
+!define STYLE_PROCESS fill:#E3F2FD,stroke:#0D47A1,stroke-width:3
+!define STYLE_OUTPUT fill:#E8F5E9,stroke:#1B5E20,stroke-width:2
+!define STYLE_PASS fill:#C8E6C9,stroke:#1B5E20,stroke-width:2
+!define STYLE_FAIL fill:#FFCDD2,stroke:#C62828,stroke-width:2
+
+skinparam backgroundColor #FAFAFA
+
+state "Setup DataFeeder" as SETUP
+
+state "Scenario Provisioning" as PROV {
+    state "tiny_binary\n(100/20)" as TINY
+    state "small_binary\n(500/100)" as SMALL
+    state "medium_binary\n(1500/300)" as MEDIUM
+    state "large_binary\n(5000/1000)" as LARGE
+}
+
+state "Run Pipeline\n(run_pipeline.py)" as RUN
+state "Pipeline Success?" as RUN_CHECK
+
+state "Validate Outputs" as VAL {
+    state "Check .h/.c files" as CHECK_C
+    state "Check .tflite valid" as CHECK_TFL
+    state "Check metrics" as CHECK_METRICS
+    state "C code compiles" as CPP_COMPILE
+}
+
+state "Validation Success?" as VAL_CHECK
+
+state "All Tests Pass" as PASS
+state "Tests Failed" as FAIL
+
+SETUP --> PROV
+
+PROV --> TINY
+PROV --> SMALL
+PROV --> MEDIUM
+PROV --> LARGE
+
+TINY --> RUN
+SMALL --> RUN
+MEDIUM --> RUN
+LARGE --> RUN
+
+RUN --> RUN_CHECK
+RUN_CHECK --> VAL : Success
+RUN_CHECK --> FAIL : Error
+
+VAL --> CHECK_C
+VAL --> CHECK_TFL
+VAL --> CHECK_METRICS
+VAL --> CPP_COMPILE
+
+CHECK_C --> VAL_CHECK
+CHECK_TFL --> VAL_CHECK
+CHECK_METRICS --> VAL_CHECK
+CPP_COMPILE --> VAL_CHECK
+
+VAL_CHECK --> PASS : Valid
+VAL_CHECK --> FAIL : Invalid
+
+@enduml

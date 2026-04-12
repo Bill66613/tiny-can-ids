@@ -1,0 +1,32 @@
+@startuml TestCategories
+!define STYLE_CATEGORY fill:#E3F2FD,stroke:#0D47A1,stroke-width:2
+!define STYLE_GROUP fill:#FFF3E0,stroke:#E65100,stroke-width:2
+!define STYLE_TEST fill:#E8F5E9,stroke:#1B5E20,stroke-width:2
+
+skinparam backgroundColor #FAFAFA
+
+package "All Tests" {
+    package "Unit Tests (Fast)" {
+        component "test_data" as UT1
+        component "test_features" as UT2
+        component "test_models" as UT3
+        component "test_export" as UT4
+    }
+    
+    package "Integration Tests (Pipeline Output Validation)" {
+        component "Pipeline Runs" as IT1
+        component "Output Validation" as IT2
+        component "C Code Compilation" as IT3
+    }
+    
+    package "Performance Tests" {
+        component "Baseline Comparison" as PT1
+        component "Memory Profiling" as PT2
+    }
+}
+
+UT1 --> UT2 : shared fixtures
+IT1 --> IT2 : progressive
+PT1 --> PT2 : shared
+
+@enduml

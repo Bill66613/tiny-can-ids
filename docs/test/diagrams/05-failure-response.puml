@@ -1,0 +1,41 @@
+@startuml FailureResponse
+!define STYLE_PASS fill:#C8E6C9,stroke:#1B5E20
+!define STYLE_FAIL fill:#FFCDD2,stroke:#C62828
+!define STYLE_INVESTIGATE fill:#FFF9C4,stroke:#F57F17
+
+skinparam backgroundColor #FAFAFA
+
+state "Test Fails" as FAIL
+state "Is it Unit?" as IS_UNIT {
+    IS_UNIT --> UNIT_FAIL : Yes
+    IS_UNIT --> INT_FAIL : No (Integration)
+}
+
+state "Unit Fails" as UNIT_FAIL
+state "Stop fast suite"  as STOP_FAST
+
+state "Integration Fails" as INT_FAIL
+state "Mark scenario failed" as MARK_SCENARIO
+state "Run other scenarios?" as MORE_SCENARIOS {
+    MORE_SCENARIOS --> RUN_OTHER : Yes (for full visibility)
+    MORE_SCENARIOS --> REPORT : No (early exit)
+}
+state "Run other scenarios" as RUN_OTHER
+
+state "Generate Report" as REPORT
+state "Is PR?" as IS_PR {
+    IS_PR --> NOTIFY : Yes
+    IS_PR --> END : No
+}
+state "Notify Team (Email)" as NOTIFY
+state "End" as END
+
+FAIL --> IS_UNIT
+UNIT_FAIL --> STOP_FAST
+STOP_FAST --> REPORT
+MARK_SCENARIO --> MORE_SCENARIOS
+RUN_OTHER --> REPORT
+REPORT --> IS_PR
+NOTIFY --> END
+
+@enduml

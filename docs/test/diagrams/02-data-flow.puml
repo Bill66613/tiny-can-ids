@@ -1,0 +1,28 @@
+@startuml DataFlow
+!define STYLE_INPUT fill:#C8E6C9,stroke:#1B5E20,stroke-width:2
+!define STYLE_PROCESS fill:#BBDEFB,stroke:#0D47A1,stroke-width:2
+!define STYLE_OUTPUT fill:#FFE0B2,stroke:#E65100,stroke-width:2
+
+skinparam backgroundColor #FAFAFA
+
+state "DataFeeder" as DF {
+    state "Initialize\nScenarios" as INIT
+    state "Get Scenario\nConfig" as GET
+    state "Generate\nSynthetic Data" as GEN
+    state "Preprocess &\nExtract Features" as PREP
+}
+
+state "Integration Test" as IT {
+    state "Provision Test\nData (CSV)" as PROV
+    state "Run\nPipeline" as RUN
+    state "Validate\nOutput" as VAL
+}
+
+INIT --> GET
+GET --> GEN
+GEN --> PREP
+PREP --> PROV
+PROV --> RUN
+RUN --> VAL
+
+@enduml
