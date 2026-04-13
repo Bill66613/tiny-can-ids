@@ -60,17 +60,31 @@ jobs:
         run: |
           missing=0
 
-          for f in \
-            output/tiny_ids_model.tflite \
-            output/tiny_ids_weights.h \
-            output/tiny_ids_inference.c
-          do
-            if [ ! -f "$f" ]; then
-              echo "::error::Missing artifact: $f"
+          shopt -s nullglob
+
+          patterns=(
+            "./output/tiny_ids_*tflite"
+            "./output/tiny_ids_*.c"
+            "./output/tiny_ids_*.h"
+          )
+
+          for pattern in "${patterns[@]}"; do
+            files=($pattern)
+
+            if [ ${#files[@]} -eq 0 ]; then
+              echo "::error::No files match pattern: $pattern"
               missing=1
-            else
-              echo "OK: $f"
+              continue
             fi
+
+            for f in "${files[@]}"; do
+              if [ -f "$f" ]; then
+                echo "OK: $f"
+              else
+                echo "::error::Not a file: $f"
+                missing=1
+              fi
+            done
           done
 
           if [ "$missing" -ne 0 ]; then
