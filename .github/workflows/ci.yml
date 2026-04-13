@@ -78,11 +78,10 @@ jobs:
             fi
 
             for f in "${files[@]}"; do
-              if [ -f "$f" ]; then
-                test -f "$f"
+              if test -f "$f"; then
                 echo "OK: $f"
               else
-                echo "::error::Not a file: $f"
+                echo "::error::Missing: $f"
                 missing=1
               fi
             done
@@ -97,7 +96,7 @@ jobs:
           echo "All output artifacts generated successfully"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: pipeline-output
           path: output/
