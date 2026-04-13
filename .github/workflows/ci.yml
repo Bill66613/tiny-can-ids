@@ -57,29 +57,29 @@ jobs:
         run: python -m scripts.run_pipeline --output-dir output/ --window-size 20 --epochs 3
 
       - name: Verify output artifacts
-          run: |
-            missing=0
+        run: |
+          missing=0
 
-            for f in \
-              output/tiny_ids_model.tflite \
-              output/tiny_ids_weights.h \
-              output/tiny_ids_inference.c
-            do
-              if [ ! -f "$f" ]; then
-                echo "::error::Missing artifact: $f"
-                missing=1
-              else
-                echo "OK: $f"
-              fi
-            done
-
-            if [ "$missing" -ne 0 ]; then
-              echo "Generated files in workspace:"
-              find . -maxdepth 3 -type f | sort
-              exit 1
+          for f in \
+            output/tiny_ids_model.tflite \
+            output/tiny_ids_weights.h \
+            output/tiny_ids_inference.c
+          do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing artifact: $f"
+              missing=1
+            else
+              echo "OK: $f"
             fi
+          done
 
-            echo "All output artifacts generated successfully"
+          if [ "$missing" -ne 0 ]; then
+            echo "Generated files in workspace:"
+            find . -maxdepth 3 -type f | sort
+            exit 1
+          fi
+
+          echo "All output artifacts generated successfully"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
