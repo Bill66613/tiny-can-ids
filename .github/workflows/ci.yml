@@ -63,7 +63,7 @@ jobs:
           shopt -s nullglob
 
           patterns=(
-            "./output/tiny_ids_*tflite"
+            "./output/tiny_ids_*.tflite"
             "./output/tiny_ids_*.c"
             "./output/tiny_ids_*.h"
           )
@@ -88,8 +88,12 @@ jobs:
           done
 
           if [ "$missing" -ne 0 ]; then
-            echo "Generated files in workspace:"
-            find . -maxdepth 3 -type f | sort
+            echo "Generated files in output/:"  
+            if test -d ./output; then  
+              find ./output -maxdepth 2 -type f | sort  
+            else  
+              echo "::error::output/ directory does not exist"  
+            fi  
             exit 1
           fi
 
