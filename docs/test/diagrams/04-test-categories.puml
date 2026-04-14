@@ -7,10 +7,10 @@ skinparam backgroundColor #FAFAFA
 
 package "All Tests" {
     package "Unit Tests (Fast)" {
-        component "test_data" as UT1
-        component "test_features" as UT2
-        component "test_models" as UT3
-        component "test_export" as UT4
+        component "test_data (12 tests)" as UT1
+        component "test_features (15 tests)" as UT2
+        component "test_models (28 tests)" as UT3
+        component "test_export (29 tests)" as UT4
     }
     
     package "Integration Tests (Pipeline Output Validation)" {
@@ -27,6 +27,7 @@ package "All Tests" {
 
 UT1 --> UT2 : shared fixtures
 IT1 --> IT2 : progressive
+IT2 --> IT3 : progressive
 PT1 --> PT2 : shared
 
 @enduml

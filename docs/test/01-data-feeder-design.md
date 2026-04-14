@@ -67,28 +67,47 @@ class Scenario:
     def __init__(self, config: ScenarioConfig):
         """Initialize scenario with configuration."""
         
-    def generate(self) -> Tuple[DataFrame, str]:
-        """Generate raw CAN data.
+    def generate(self) -> DataFrame:
+        """Generate raw CAN data (Timestamp, ID, DLC, Data0-7, Flag).
         
         Returns:
-            (raw_df, description)
+            raw_df: Raw CAN frames
         """
         
     def preprocess(self) -> DataFrame:
-        """Preprocess data (add labels)."""
+        """Preprocess data and add labels (Normal=0, Attack=1).
         
-    def extract_features(self, window_size: int = 50) -> Tuple[ndarray, ndarray]:
-        """Extract features using pipeline encoder.
+        This step adds the 'label' column to raw_df.
+        Note: Does NOT extract features—that is handled by run_pipeline.
         
         Returns:
-            (X: (n_windows, 46), y: (n_windows,))
+            preprocessed_df: Raw frames + labels column
         """
         
     def to_csv(self, path: Path) -> Path:
-        """Save raw data as CSV for pipeline input."""
+        """Save raw+labeled data as CSV for pipeline input.
+        
+        Output CSV format: Timestamp, ID, DLC, Data0-7, Flag, label
+        
+        Args:
+            path: Destination file path
+            
+        Returns:
+            path: Saved CSV file path
+        """
         
     def validate(self) -> bool:
-        """Validate data integrity."""
+        """Validate data integrity after preprocessing.
+        
+        Checks:
+        - All rows have required CAN columns
+        - Label column present (0 or 1)
+        - No NaN values
+        - Proper data types
+        
+        Returns:
+            True if valid, raises exception otherwise
+        """
 ```
 
 ### ScenarioSize Enum
@@ -304,10 +323,12 @@ class DataFeeder:
 
 See [diagrams/02-data-flow.puml](diagrams/02-data-flow.puml) for the workflow showing:
 1. DataFeeder initializes with predefined scenarios
-2. Scenario is selected and data generated
-3. Data preprocessed and features extracted
-4. Integration test provisions CSV and runs pipeline
-5. Pipeline execution is validated
+2. Scenario is selected and raw CAN data generated
+3. Data preprocessed and labeled (Normal=0, Attack=1)
+4. Raw+labeled CSV saved to disk
+5. Integration test passes CSV to run_pipeline.py
+6. Pipeline handles all preprocessing and feature extraction (single source of truth)
+7. Pipeline execution validated against C exports and metrics
 
 ---
 

@@ -293,33 +293,37 @@ jobs:
 
 ## Performance Baseline & Regression Detection
 
-### Baseline Metrics (Target)
+### Data-Driven Threshold Strategy
 
-| Suite | Tests | Target Time | Max Regression |
-|-------|-------|-------------|-----------------|
-| Unit | 84 | < 2 min | +20% |
-| Integration (tiny) | 3 | < 2 min | +30% |
-| Integration (medium) | 5 | < 8 min | +25% |
-| Performance | 5 | < 3 min | +15% |
+Instead of fixed thresholds, performance baselines are **statistically derived** from historical test runs:
 
-### Regression Detection (Automated)
+1. **Capture baseline**: Run test suite 10 times in CI environment, record execution times
+2. **Calculate statistics**: Compute mean (μ) and standard deviation (σ)
+3. **Dynamic threshold**: Threshold = μ + 2σ
+   - Adapts automatically to CI environment noise
+   - Distinguishes real slowdowns from variance
+   - Reduces false positives and false negatives
 
-```python
-# tests/performance/test_baseline.py
+**Example:**
+- Unit tests run 10 times: [45.2, 46.1, 45.8, 46.3, 45.5, 46.0, 45.7, 46.2, 45.9, 46.1]
+- Mean (μ) = 45.88 seconds
+- Stddev (σ) = 0.35 seconds
+- Threshold = 45.88 + (2 × 0.35) = **46.59 seconds**
 
-def test_performance_regression():
-    """Detect test suite performance regressions."""
-    baseline = load_baseline_metrics()
-    current = run_tests_with_timing()
-    
-    for suite_name, metrics in current.items():
-        baseline_time = baseline[suite_name]["avg_time"]
-        current_time = metrics["total_time"]
-        max_allowed = baseline_time * 1.25  # 25% regression threshold
-        
-        assert current_time < max_allowed, \
-            f"{suite_name}: {current_time:.2f}s > max {max_allowed:.2f}s"
-```
+### Regression Detection
+
+When tests run:
+- If current time < 46.59s: PASS (normal variance)
+- If current time > 46.59s: FAIL (genuine regression detected)
+
+The failure message includes context: actual time, threshold, mean, and stddev for debugging.
+
+### Baseline Recalibration Options
+- Python version upgrade, CI runner change
+- Major test infrastructure refactoring
+- Time-based recalibration every day as safety net
+- Alerts if false positive rate increases (>10% of runs)
+- Trigger: Manual GitHub Actions workflow dispatch
 
 ---
 

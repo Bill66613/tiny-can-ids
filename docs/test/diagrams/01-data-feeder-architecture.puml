@@ -27,8 +27,8 @@ package "Data Feeder System" {
         - data: Optional[DataFrame]
         __
         + generate() -> DataFrame
+        + preprocess() -> DataFrame
         + to_csv(path: Path) -> Path
-        + get_features() -> Tuple[ndarray, ndarray]
         + validate() -> bool
     }
 
