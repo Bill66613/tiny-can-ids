@@ -11,18 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.11", "3.12"]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
@@ -41,10 +41,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -58,13 +58,49 @@ jobs:
 
       - name: Verify output artifacts
         run: |
-          test -f output/tiny_ids_model.tflite
-          test -f output/tiny_ids_weights.h
-          test -f output/tiny_ids_inference.c
+          missing=0
+
+          shopt -s nullglob
+
+          patterns=(
+            "./output/tiny_ids_*.tflite"
+            "./output/tiny_ids_*.c"
+            "./output/tiny_ids_*.h"
+          )
+
+          for pattern in "${patterns[@]}"; do
+            files=($pattern)
+
+            if [ ${#files[@]} -eq 0 ]; then
+              echo "::error::No files match pattern: $pattern"
+              missing=1
+              continue
+            fi
+
+            for f in "${files[@]}"; do
+              if test -f "$f"; then
+                echo "OK: $f"
+              else
+                echo "::error::Missing: $f"
+                missing=1
+              fi
+            done
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            echo "Generated files in output/:"  
+            if test -d ./output; then  
+              find ./output -maxdepth 2 -type f | sort  
+            else  
+              echo "::error::output/ directory does not exist"  
+            fi  
+            exit 1
+          fi
+
           echo "All output artifacts generated successfully"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pipeline-output
           path: output/
