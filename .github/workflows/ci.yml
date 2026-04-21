@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, "lu13hc/test_document"]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, "lu13hc/test_document"]
 
 jobs:
   test:
@@ -29,12 +29,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-${{ matrix.python-version }}-
 
+      - name: Cache Performance Baseline
+        uses: actions/cache@v4
+        with:
+          path: .perf_cache # Folder have file active_baseline.json
+          # A unique key for each run allows GitHub to save the latest version.
+          key: perf-${{ runner.os }}-${{ matrix.python-version }}-${{ github.run_id }}
+          # If the key is not found, GitHub will retrieve the nearest version with that prefix.
+          restore-keys: |
+            perf-${{ runner.os }}-${{ matrix.python-version }}-
+            perf-${{ runner.os }}-
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
       - name: Run tests
+        env: 
+          # Declare to Python where the cache directory is located
+          PERF_BASELINE_DIR: .perf_cache
         run: pytest tests/ -v --tb=short
 
   pipeline-smoke:
