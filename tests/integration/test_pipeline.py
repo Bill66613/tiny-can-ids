@@ -123,14 +123,18 @@ class TestPipelineOutputs:
         except ImportError:
             pytest.skip("TensorFlow not installed, skipping TFLite validation")
 
-        scenario = feeder.get_scenario("tiny_binary")
+        scenario = feeder.get_scenario("small_binary")
         csv_path = scenario.to_csv(tmp_path / "tflite.csv")
         output_dir = tmp_path / "output"
         
         # Run the full pipeline (including TFLite).
-        self.run_pipeline(csv_path, output_dir, ["--epochs", "1"])
+        result = self.run_pipeline(csv_path, output_dir, ["--epochs", "3"])
         
         tflite_files = list(output_dir.glob("*.tflite"))
+        if len(tflite_files) == 0:
+            print("\nPIPELINE STDOUT:", result.stdout)
+            print("\nPIPELINE STDERR:", result.stderr)
+
         assert len(tflite_files) > 0, "No TFLite file generated"
         
         size = tflite_files[0].stat().st_size
