@@ -73,8 +73,8 @@ jobs:
       - name: Verify output artifacts
         run: |
           test -f output/tiny_ids_model.tflite
-          test -f output/tiny_ids_weights.h
-          test -f output/tiny_ids_inference.c
+          test -f output/tiny_ids_tnn_weights.h
+          test -f output/tiny_ids_tnn_inference.c
           echo "All output artifacts generated successfully"
 
       - name: Upload artifacts
