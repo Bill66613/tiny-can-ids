@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, "lu13hc/test_document"]
+    branches: [main, develop, "lu13hc/test_document", "lhb2hc/test_pipeline"]
   pull_request:
     branches: [main, develop, "lu13hc/test_document"]
 
