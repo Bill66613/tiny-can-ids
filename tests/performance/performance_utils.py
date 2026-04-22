@@ -11,7 +11,7 @@ ACTIVE_BASELINE = Path(ACTIVE_DIR) / "active_baseline.json"
 
 def _load_data():
     Path(ACTIVE_DIR).mkdir(parents=True, exist_ok=True)
-    # Ưu tiên lấy từ Cache (Active) trước, nếu không có thì lấy từ Repo (Reference)
+    # Prioritize retrieving from the Active Cache first; if it's not there, retrieve from the Reference Repo.
     if ACTIVE_BASELINE.exists():
         with open(ACTIVE_BASELINE, "r") as f:
             return json.load(f)
