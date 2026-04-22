@@ -235,6 +235,19 @@ def load_multi_attack_dataset(
     )
     return combined
 
+def safe_int_conversion(x):
+    """Safe conversion function for CAN bus ID."""
+    try:
+        if isinstance(x, str):
+            # If contains the exponent character 'E' or the plus sign '+'
+            if 'E' in x.upper() or '+' in x:
+                # Change from Scientific -> Float -> Int
+                return int(float(x))
+            # If it's pure Hex 
+            return int(x, 16)
+        return int(x)
+    except (ValueError, TypeError):
+        return 0 
 
 def preprocess_can_data(df: pd.DataFrame) -> pd.DataFrame:
     """Clean and type-cast a raw CAN DataFrame.
@@ -264,9 +277,7 @@ def preprocess_can_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     df["Timestamp"] = pd.to_numeric(df["Timestamp"], errors="coerce")
-    df["ID"] = df["ID"].apply(
-        lambda x: int(str(x), 16) if isinstance(x, str) else int(x)
-    )
+    df["ID"] = df["ID"].apply(safe_int_conversion)
     df["DLC"] = pd.to_numeric(df["DLC"], errors="coerce").fillna(0).astype(int)
 
     for col in [f"Data{i}" for i in range(8)]:
