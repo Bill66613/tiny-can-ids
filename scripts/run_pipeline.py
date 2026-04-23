@@ -271,7 +271,7 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler):
         models["lr"] = ("Logistic Regression", lr_model, lr_model.predict(X_test_s))
 
         # Save Logistic Regression model
-        lr_checkpoint_path = "save_models/tiny_ids_lr_checkpoint.joblib"
+        lr_checkpoint_path = "output/tiny_ids_lr_save_model.joblib"
         joblib.dump({'model': lr_model, 'scaler': scaler}, lr_checkpoint_path)
         logger.info("Saved Logistic Regression checkpoint to %s", lr_checkpoint_path)
 
@@ -281,7 +281,7 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler):
         models["dt"] = ("Decision Tree", dt_model, dt_model.predict(X_test_s))
 
         # Save Decision Tree model
-        dt_checkpoint_path = "save_models/tiny_ids_dt_checkpoint.joblib"
+        dt_checkpoint_path = "output/tiny_ids_dt_save_model.joblib"
         joblib.dump({'model': dt_model, 'scaler': scaler}, dt_checkpoint_path)
         logger.info("Saved Decision Tree checkpoint to %s", dt_checkpoint_path)
 
@@ -292,7 +292,7 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler):
         models["tnn"] = ("Tiny Neural Network", tnn, tnn.predict(X_test_s))
         
         # Save Tiny Neural Network model
-        tnn_checkpoint_path = "save_models/tiny_ids_tnn_checkpoint.joblib"
+        tnn_checkpoint_path = "output/tiny_ids_tnn_save_model.joblib"
         joblib.dump({'model': tnn, 'scaler': scaler}, tnn_checkpoint_path)
         logger.info("Saved Tiny Neural Network checkpoint to %s", tnn_checkpoint_path)
 
