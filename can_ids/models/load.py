@@ -8,7 +8,7 @@ from can_ids.data.loader import load_can_dataset, preprocess_can_data
 from can_ids.features.engineer import build_feature_matrix
 from can_ids.models import ModelQuantizer
 
-def load_existing_model(model_path='save_models/tiny_ids_tnn_checkpoint.joblib'):
+def load_existing_model(model_path='output/tiny_ids_tnn_save_model.joblib'):
     """Load both the model and scaler from the checkpoint file."""
     if os.path.exists(model_path):
         print(f"--- Loading existing model checkpoint from {model_path} ---")
@@ -22,7 +22,7 @@ def load_existing_model(model_path='save_models/tiny_ids_tnn_checkpoint.joblib')
 
 def main():
     # 1. Path configuration
-    MODEL_PATH = 'save_models/tiny_ids_tnn_checkpoint.joblib'
+    MODEL_PATH = 'output/tiny_ids_tnn_save_model.joblib'
     DATA_PATH = 'dataset/DoS_dataset.csv'  
     
     # 2. Loading the model and scaler (Way 2: Joblib)
