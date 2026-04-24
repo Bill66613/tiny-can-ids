@@ -43,6 +43,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install psutil
           pip install -e ".[dev]"
 
       - name: Run tests
@@ -65,6 +66,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install psutil
           pip install -e ".[dev]"
 
       - name: Run pipeline with synthetic data
