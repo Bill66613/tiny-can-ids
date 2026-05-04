@@ -1,0 +1,74 @@
+@startuml Dataflow
+title Dataflow Pipeline Diagram
+skinparam monochrome false
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam roundcorner 15
+skinparam ArrowThickness 1.5
+left to right direction
+
+package "Data Preparation" #LightBlue {
+    [Raw CAN Data \n(CSV Log: ID, Timestamp, DLC, Payload)] --> [Preprocessing]
+    [Preprocessing] --> [\tLabeled Dataset \n(Normal (R) : 0 \t Attack (T): 1)]
+}
+
+package "Preprocessing Steps" #AliceBlue {
+        [Preprocessing] --> [Data Cleaning]
+        [Data Cleaning] --> [Format Conversion]
+        [Format Conversion] --> [Data Padding]
+        [Data Padding] --> [Label Encoding]
+        [Label Encoding] --> [Data Integration]
+    }
+
+package "Feature Engineering" #LightGreen {
+    [\tLabeled Dataset \n(Normal (R) : 0 \t Attack (T): 1)] --> [Sliding Window]
+    
+    package "Sliding Window Logic" #HoneyDew {
+        [Buffer: Size= 50 or 100, Stride= N] as buf
+    }
+
+    [Sliding Window] --> [46-Feature Vectors\n(22 ID freq + 4 timing + 17 payload + 3 rate/novelty)]
+}
+
+package "Model Training / Optimization" #LightYellow {
+    [46-Feature Vectors\n(22 ID freq + 4 timing + 17 payload + 3 rate/novelty)] --> [Standard Scaling]
+    
+    package "Machine Learning Training"  #Wheat {
+        [Standard Scaling] --> [Logistic Regression] : Linear Baseline
+        [Standard Scaling] --> [Decision Tree] : If-Else Logic
+        [Standard Scaling] --> [Tiny Neural Network] : Non-linear Patterns
+    }
+
+    [Logistic Regression] --> [Model Evaluation]
+    [Decision Tree] --> [Model Evaluation]
+    [Tiny Neural Network] --> [Model Evaluation]
+
+    [Model Evaluation] --> [Model Compression] : Selection & Optimization
+    
+
+    package "Quantization Options" #LightPink {
+        [Model Compression] --> [Float32] : High Precision
+        [Model Compression] --> [Int16] : Balanced
+        [Model Compression] --> [Int8] : Maximum Compression
+    }
+}
+
+package "Export & Deployment" #LightGray {
+    [Float32] --- export_point
+    [Int16] --- export_point
+    [Int8] --- export_point
+
+    package "Target: Modern Boards/TCU" #GhostWhite {
+        file "TFLite Binary (.tflite)" as tflite
+    }
+
+    package "Target: Low-end MCUs" #GhostWhite {
+        file "C Source/Header (.c/.h file)" as c_code
+    }
+
+    export_point --> tflite : Path A: TFLite Runtime
+    export_point --> c_code : Path B: Manual C Inference
+
+    tflite ..> [C-Array Model]: xxd -i (Hex Dump)
+}
+@enduml
