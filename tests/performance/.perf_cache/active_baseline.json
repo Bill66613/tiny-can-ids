@@ -1,0 +1,17 @@
+{
+    "pipeline_latency_seconds": [
+        8.46162462234497
+    ],
+    "peak_memory_usage_mb": [
+        633.56640625
+    ],
+    "inference_latency_1k_frames": [
+        0.10018062591552734
+    ],
+    "model_loading_seconds": [
+        0.05150294303894043
+    ],
+    "quantization_mse_error": [
+        0.023
+    ]
+}

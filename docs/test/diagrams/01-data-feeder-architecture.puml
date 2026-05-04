@@ -1,0 +1,82 @@
+@startuml DataFeederArchitecture
+!define STYLE_CLASS fill:#E1F5FF,stroke:#01579B,stroke-width:2
+!define STYLE_INTERFACE fill:#F3E5F5,stroke:#4A148C,stroke-width:2
+!define STYLE_ENUM fill:#E8F5E9,stroke:#1B5E20,stroke-width:2
+!define STYLE_DATA fill:#FFF3E0,stroke:#E65100,stroke-width:2
+
+skinparam backgroundColor #FAFAFA
+skinparam class {
+    BackgroundColor STYLE_CLASS
+    BorderColor #01579B
+    ArrowColor #1976D2
+}
+
+package "Data Feeder System" {
+    class DataFeeder {
+        - scenarios: Dict[str, Scenario]
+        - rng: np.random.Generator
+        __
+        + get_scenario(name: str) -> Scenario
+        + list_scenarios() -> List[str]
+        + validate_data(df: DataFrame) -> bool
+    }
+
+    class Scenario {
+        - name: str
+        - config: ScenarioConfig
+        - data: Optional[DataFrame]
+        __
+        + generate() -> DataFrame
+        + preprocess() -> DataFrame
+        + to_csv(path: Path) -> Path
+        + validate() -> bool
+    }
+
+    class ScenarioConfig {
+        - scenario_size: ScenarioSize
+        - seed: int
+        - window_size: int
+        - dataset_type: DatasetType
+    }
+
+    enum ScenarioSize {
+        TINY = (100, 20)
+        SMALL = (500, 100)
+        MEDIUM = (1500, 300)
+        LARGE = (5000, 1000)
+    }
+
+    enum DatasetType {
+        SYNTHETIC_BALANCED
+        SYNTHETIC_IMBALANCED
+        SYNTHETIC_EXTREME
+        REAL_SUBSET
+    }
+}
+
+package "Test Integration" {
+    class IntegrationTest {
+        - feeder: DataFeeder
+        - data: Scenario
+        __
+        + setup_test_data()
+        + run_pipeline()
+        + validate_outputs()
+    }
+
+    class PipelineStageTest {
+        - stage_num: int
+        - feeder: DataFeeder
+        __
+        + test_stage()
+    }
+}
+
+DataFeeder --> Scenario : creates
+Scenario --> ScenarioConfig : uses
+ScenarioConfig --> ScenarioSize : uses
+ScenarioConfig --> DatasetType : uses
+IntegrationTest --> DataFeeder : uses
+PipelineStageTest --> DataFeeder : uses
+
+@enduml
