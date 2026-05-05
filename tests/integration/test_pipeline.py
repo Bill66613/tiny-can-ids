@@ -26,6 +26,7 @@ class TestPipelineOutputs:
         cmd = [
             sys.executable,
             "scripts/run_pipeline.py",
+            "--export-model", "all",
             "--dataset", str(dataset_path),
             "--output-dir", str(output_dir)
         ]
