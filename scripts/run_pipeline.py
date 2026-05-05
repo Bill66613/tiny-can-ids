@@ -53,7 +53,6 @@ from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s – %(message)s",
@@ -187,6 +186,7 @@ def _parse_args() -> argparse.Namespace:
 
     return merged
 
+
 # ------------------------------------------------------------------
 # 1. Load / generate data
 # ------------------------------------------------------------------
@@ -217,6 +217,7 @@ def load_data(args):
     logger.info("Raw frames: %d", len(raw_df))
     return raw_df, num_classes, class_names
 
+
 # ------------------------------------------------------------------
 # 2. Pre-process & # 3. Feature engineering
 # ------------------------------------------------------------------
@@ -231,9 +232,10 @@ def preprocess_features(raw_df, window_size):
         100 * df["label"].mean(),
     )
 
-    X, y = build_feature_matrix(df, window_size= window_size)
+    X, y = build_feature_matrix(df, window_size=window_size)
     logger.info("Feature matrix: %s  labels: %s", X.shape, np.bincount(y))
     return X, y
+
 
 # ------------------------------------------------------------------
 # 4. Train / test split + scaling
@@ -247,10 +249,11 @@ def split_scale(X, y):
     X_test_s = scaler.transform(X_test)
     return X_train_s, X_test_s, y_train, y_test, scaler
 
+
 # ------------------------------------------------------------------
 # 5. Train models (only what's needed)
 # ------------------------------------------------------------------
-def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler):
+def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler, output_dir):
     from can_ids.models import (
         train_logistic_regression,
         train_decision_tree,
@@ -263,6 +266,9 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler):
     need_lr = train_all or args.export_model == "lr"
     need_dt = train_all or args.export_model == "dt"
 
+    checkpoint_dir = Path(output_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
     models: dict = {}
 
     if need_lr:
@@ -271,8 +277,8 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler):
         models["lr"] = ("Logistic Regression", lr_model, lr_model.predict(X_test_s))
 
         # Save Logistic Regression model
-        lr_checkpoint_path = "output/tiny_ids_lr_save_model.joblib"
-        joblib.dump({'model': lr_model, 'scaler': scaler}, lr_checkpoint_path)
+        lr_checkpoint_path = checkpoint_dir / "tiny_ids_lr_save_model.joblib"
+        joblib.dump({"model": lr_model, "scaler": scaler}, lr_checkpoint_path)
         logger.info("Saved Logistic Regression checkpoint to %s", lr_checkpoint_path)
 
     if need_dt:
@@ -281,8 +287,8 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler):
         models["dt"] = ("Decision Tree", dt_model, dt_model.predict(X_test_s))
 
         # Save Decision Tree model
-        dt_checkpoint_path = "output/tiny_ids_dt_save_model.joblib"
-        joblib.dump({'model': dt_model, 'scaler': scaler}, dt_checkpoint_path)
+        dt_checkpoint_path = checkpoint_dir / "tiny_ids_dt_save_model.joblib"
+        joblib.dump({"model": dt_model, "scaler": scaler}, dt_checkpoint_path)
         logger.info("Saved Decision Tree checkpoint to %s", dt_checkpoint_path)
 
     if need_tnn:
@@ -290,19 +296,20 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler):
         tnn = TinyNeuralNetwork(input_dim=X_train_s.shape[1], num_classes=num_classes)
         tnn.fit(X_train_s, y_train, epochs=args.epochs, verbose=0, balance_classes=True)
         models["tnn"] = ("Tiny Neural Network", tnn, tnn.predict(X_test_s))
-        
+
         # Save Tiny Neural Network model
-        tnn_checkpoint_path = "output/tiny_ids_tnn_save_model.joblib"
-        joblib.dump({'model': tnn, 'scaler': scaler}, tnn_checkpoint_path)
+        tnn_checkpoint_path = checkpoint_dir / "tiny_ids_tnn_save_model.joblib"
+        joblib.dump({"model": tnn, "scaler": scaler}, tnn_checkpoint_path)
         logger.info("Saved Tiny Neural Network checkpoint to %s", tnn_checkpoint_path)
 
     return models
+
 
 # ------------------------------------------------------------------
 # 6. Evaluate trained models + comparison table
 # ------------------------------------------------------------------
 def evaluate(models, y_test, X_test_s, class_names):
-    
+
     for key, (name, model, y_pred) in models.items():
         _report(name, y_pred, y_test, class_names)
 
@@ -311,6 +318,7 @@ def evaluate(models, y_test, X_test_s, class_names):
 
     if len(models) > 1:
         _model_comparison_table(models, y_test, X_test_s)
+
 
 # ------------------------------------------------------------------
 # 7. Quantize Tiny Neural Network
@@ -325,6 +333,7 @@ def quantization(models):
         logger.info(
             "Quantized model footprint: %d bytes", quantizer.memory_footprint_bytes()
         )
+
 
 # ------------------------------------------------------------------
 # 8. TFLite export
@@ -369,7 +378,6 @@ def c_export(args, models, y_test, output_dir):
         logger.info("  %s → %s, %s", name, header.name, source.name)
 
 
-
 def main() -> None:
     args = _parse_args()
     output_dir = Path(args.output_dir)
@@ -378,10 +386,17 @@ def main() -> None:
     raw_df, num_classes, class_names = load_data(args)
     X, y = preprocess_features(raw_df, args.window_size)
     X_train_s, X_test_s, y_train, y_test, scaler = split_scale(X, y)
-    
-    models = train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler)
+
+    models = train_models(
+        args,
+        X_train_s,
+        y_train,
+        X_test_s,
+        num_classes,
+        scaler,
+        output_dir,
+    )
     evaluate(models, y_test, X_test_s, class_names)
-    
 
     quantization(models)
     tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output_dir)
