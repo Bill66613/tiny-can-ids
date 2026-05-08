@@ -286,3 +286,71 @@ def build_feature_matrix(
         n_windows,
     )
     return X, y
+
+# ------------------------------------------------------------------
+# DoS Feature Extraction
+# ------------------------------------------------------------------
+def build_dos_feature_matrix(
+    df: pd.DataFrame, 
+    window_size: int = 50,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Build a lightweight feature matrix specifically for DoS attack detection.
+    Extracts only 5 critical features per window to save CPU cycles on MCU.
+    
+    Features: [Mean Δt, Std Δt, Message Rate, Dominant ID Freq, ID Entropy]
+    """
+    timestamps = df["Timestamp"].to_numpy(dtype=np.float64)
+    ids = df["ID"].to_numpy()
+    labels = df["label"].to_numpy()
+    n = len(df)
+    n_windows = max(1, n // window_size)
+
+    X = np.zeros((n_windows, 8), dtype=np.float32)
+    y = np.zeros(n_windows, dtype=np.int32)
+
+    for w in range(n_windows):
+        start = w * window_size
+        end = (w + 1) * window_size
+
+        win_ts = timestamps[start:end]
+        win_ids = ids[start:end]
+        win_labels = labels[start:end]
+        # Timing: Mean Δt và Std Δt
+        if len(win_ts) > 1:
+            dt = np.diff(win_ts)
+            X[w, 0] = dt.mean()
+            X[w, 1] = dt.std()
+            
+            # Message Rate (Messages / Second)
+            time_span = win_ts[-1] - win_ts[0]
+            X[w, 2] = len(win_ts) / max(time_span, 1e-6)
+            # Min Δt: Highly sensitive to instant DoS signals
+            X[w, 5] = dt.min()
+        else:
+            X[w, 0], X[w, 1], X[w, 2], X[w, 5] = 0.0, 0.0, 0.0
+
+        if len(win_ids) > 0:
+            # Calculate the probability of the IDs appearing in the window.
+            _, counts = np.unique(win_ids, return_counts=True)
+            probs = counts / len(win_ids)
+            
+            # Dominant ID Frequency 
+            X[w, 3] = probs.max()
+            
+            # Shannon Entropy
+            X[w, 4] = float(-np.sum(probs * np.log2(probs + 1e-12)))
+
+            # High Priority ID rate (< 0x100 or 256)
+            X[w, 6] = np.sum(win_ids < 256) / len(win_ids)
+            
+            # Longest sequence of identical IDs
+            # Logic: Find the points where the ID changes, calculate the distance between those points
+            changes = np.concatenate(([1], np.diff(win_ids) != 0))
+            run_lengths = np.diff(np.where(np.concatenate((changes, [1])))[0])
+            X[w, 7] = run_lengths.max() if len(run_lengths) > 0 else 0
+        # If there is any attack -> Label 1
+        y[w] = int(win_labels.any())
+        
+    logger.info("DoS Feature matrix optimized: %s (Reduced from 46 to 8 features)", X.shape)
+    return X, y

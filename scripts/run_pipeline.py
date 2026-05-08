@@ -38,6 +38,7 @@ import sys
 import joblib
 import os
 
+import pandas as pd
 from pathlib import Path
 
 try:
@@ -82,6 +83,7 @@ _DEFAULTS: dict = {
     "epochs": 20,
     "no_tflite": False,
     "export_model": "tnn",
+    "mode": "standard",
 }
 
 # TOML key → argparse dest mapping (handles hyphens vs underscores).
@@ -153,6 +155,12 @@ def _parse_args() -> argparse.Namespace:
         help="Which model(s) to export to C code. "
         "'all' exports all three, 'best' picks the highest-F1 model "
         "(default: tnn).",
+    )
+    parser.add_argument(
+        "--mode",
+        default="standard",
+        choices=["standard", "dos_only"],
+        help="Choose the execution path: 'standard' for a comprehensive pipeline, 'dos_only' for specific DoS optimization."
     )
     cli_args = parser.parse_args()
 
@@ -377,12 +385,99 @@ def c_export(args, models, y_test, output_dir):
         )
         logger.info("  %s → %s, %s", name, header.name, source.name)
 
+def run_dos_specific_pipeline(args, output_dir: Path):
+    """
+    End-to-end pipeline specifically optimized for DoS Attack Detection.
+    Uses Decision Tree as the priority model.
+    """
+    import joblib
+    from can_ids.features import build_dos_feature_matrix
+    from can_ids.data.loader import load_can_dataset
+    from can_ids.data import preprocess_can_data
+    from can_ids.models import train_decision_tree
+    from can_ids.models.compress import export_decision_tree_structure
+    from can_ids.deploy import export_model_to_c
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import classification_report
+
+    logger.info("=== Starting DoS-Specific Pipeline ===")
+
+    # 1. Load DoS Data
+    # if not args.dataset:
+    #     logger.error("Please provide --dataset path to DoS_dataset.csv")
+    #     return
+
+    logger.info("Loading DoS dataset from %s", "dataset/DoS_dataset.csv")
+    raw_df_0 = load_can_dataset("dataset/DoS_dataset.csv")
+    logger.info("Loading DoS dataset from %s", "dataset/DoS_1111_dataset.csv")
+    raw_df_1 = load_can_dataset("dataset/DoS_1111_dataset.csv")
+
+    # 2. Preprocess & Feature Engineering 
+    # Recommended window size for DoS is typically 50 to quickly detect rate spikes
+    window_size = args.window_size if args.window_size else 50
+    df_0 = preprocess_can_data(raw_df_0)
+    df_1 = preprocess_can_data(raw_df_1)
+
+    logger.info("Extracting features (Timing Δt, Message Rate, ID Entropy)...")
+    X0, y0 = build_dos_feature_matrix(df_0, window_size=window_size)
+    X1, y1 = build_dos_feature_matrix(df_1, window_size=window_size)
+
+    # 3. Train/Test Split 
+    X0_train, X0_test, y0_train, y0_test = train_test_split(
+        X0, y0, test_size=0.2, random_state=42, stratify=y0
+    )
+
+    X1_train, X1_test, y1_train, y1_test = train_test_split(
+        X1, y1, test_size=0.2, random_state=42, stratify=y1
+    )
+
+    # Note: Decision Tree does not require Standard Scaling.
+    # Omitting the Scaler minimizes float math on the MCU.
+
+    # 4. Model Training: Decision Tree priority for DoS
+    logger.info("Training Decision Tree (Top Priority for DoS)...")
+    # Limit max_depth to 5 to avoid overfitting and reduce the number of if-else statements.
+    dt_model = train_decision_tree(X0_train, y0_train, max_depth=5)
+
+    # Evaluate 
+    y_pred = dt_model.predict(X1_test)
+    print(f"\n{'=' * 60}")
+    print("  DoS Decision Tree Performance")
+    print("=" * 60)
+    print(classification_report(y0_test, y_pred, target_names=["Normal", "DoS"], digits=4))
+
+    # Save model
+    dos_output_dir = output_dir / "dos_only"
+    dos_output_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(dt_model, dos_output_dir / "dos_dt_model.joblib")
+
+    # 5. Model Compression & Export 
+    logger.info("Exporting Decision Tree to Bare-metal C (Zero-Dependency)...")
+    
+    # Check model size (Memory Footprint)
+    edt = export_decision_tree_structure(dt_model)
+    logger.info("Pruned DT Footprint: %d bytes", edt.memory_footprint_bytes())
+
+    # Generate C code (Header .h và Source .c)
+    header, source = export_model_to_c(
+        dt_model, "dt", dos_output_dir, model_name="dos_ids"
+    )
+    logger.info("  -> Header: %s", header.name)
+    logger.info("  -> Source: %s", source.name)
+    logger.info("DoS Pipeline complete. Artifacts in: %s", dos_output_dir.resolve())
+
 
 def main() -> None:
     args = _parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # --- DoS_ONLY PIPELINE ---
+    if getattr(args, "mode", "standard") == "dos_only":
+        run_dos_specific_pipeline(args, output_dir)
+        return
+    
+    # --- STANDARD PIPELINE ---
     raw_df, num_classes, class_names = load_data(args)
     X, y = preprocess_features(raw_df, args.window_size)
     X_train_s, X_test_s, y_train, y_test, scaler = split_scale(X, y)

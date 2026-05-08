@@ -6,6 +6,7 @@ from .engineer import (
     extract_payload_features,
     extract_rate_and_novelty_features,
     build_feature_matrix,
+    build_dos_feature_matrix,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "extract_payload_features",
     "extract_rate_and_novelty_features",
     "build_feature_matrix",
+    "build_dos_feature_matrix",
 ]
