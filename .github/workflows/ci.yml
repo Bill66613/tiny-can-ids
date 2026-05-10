@@ -2,11 +2,32 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, nam]
   pull_request:
     branches: [main, develop]
 
 jobs:
+  build-source-c:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build C source with Makefile
+        shell: bash
+        run: |
+          if [ -d source_c ]; then
+            SRC_DIR=source_c
+          elif [ -d srouce_c ]; then
+            SRC_DIR=srouce_c
+          else
+            echo "::error::Could not find source_c or srouce_c directory"
+            exit 1
+          fi
+
+          echo "Building in ./$SRC_DIR"
+          make -C "$SRC_DIR"
+          test -f "$SRC_DIR/can_test_app"
+
   test:
     runs-on: ubuntu-latest
     strategy:
