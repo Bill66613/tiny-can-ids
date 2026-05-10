@@ -13,6 +13,7 @@ static float _sigmoid(float x) {
 static float _relu(float x) { return x > 0.0f ? x : 0.0f; }
 
 int tiny_ids_tnn_predict(const float *input, int n_input) {
+    (void)n_input;
     float buf0[32];
     float buf1[16];
     float buf2[1];

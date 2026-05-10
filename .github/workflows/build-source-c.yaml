@@ -24,3 +24,12 @@ jobs:
           echo "Building in ./$SRC_DIR"
           make -C "$SRC_DIR"
           test -f "$SRC_DIR/can_test_app"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: output-c
+          path: |
+            output/
+            ${{ env.SRC_DIR }}/can_test_app
+          retention-days: 1
