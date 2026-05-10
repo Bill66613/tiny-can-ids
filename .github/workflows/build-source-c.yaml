@@ -14,13 +14,12 @@ jobs:
         run: |
           if [ -d source_c ]; then
             SRC_DIR=source_c
-          elif [ -d srouce_c ]; then
-            SRC_DIR=srouce_c
           else
-            echo "::error::Could not find source_c or srouce_c directory"
+            echo "::error::Could not find source_c directory"
             exit 1
           fi
 
+          echo "SRC_DIR=$SRC_DIR" >> $GITHUB_OUTPUT
           echo "Building in ./$SRC_DIR"
           make -C "$SRC_DIR"
           test -f "$SRC_DIR/can_test_app"
@@ -29,7 +28,5 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: output-c
-          path: |
-            output/
-            ${{ env.SRC_DIR }}/can_test_app
+          path: ${{ steps.build.outputs.SRC_DIR }}/can_test_app
           retention-days: 1
