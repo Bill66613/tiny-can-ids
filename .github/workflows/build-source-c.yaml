@@ -9,7 +9,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build C source with Makefile
+      - name: Install cross-compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabihf
+
+      - name: Build C source with Makefile (multi-arch)
         id: build
         shell: bash
         run: |
@@ -21,14 +29,25 @@ jobs:
           fi
 
           echo "SRC_DIR=$SRC_DIR" >> $GITHUB_OUTPUT
-          echo "Building in ./$SRC_DIR"
-          make -C "$SRC_DIR"
-          test -f "$SRC_DIR/build/can_test_app"
+          echo "Building all architectures in ./$SRC_DIR"
+          make -C "$SRC_DIR" multi
+          test -f "$SRC_DIR/build/native/can_test_app"
+          test -f "$SRC_DIR/build/aarch64/can_test_app"
+          test -f "$SRC_DIR/build/armv7/can_test_app"
 
-      - name: Smoke test — print help and run example
+      - name: Show binary sizes
         shell: bash
         run: |
-          BIN=source_c/build/can_test_app
+          echo "=== Binary sizes ==="
+          file source_c/build/native/can_test_app
+          file source_c/build/aarch64/can_test_app
+          file source_c/build/armv7/can_test_app
+          ls -lh source_c/build/*/can_test_app
+
+      - name: Smoke test — native binary
+        shell: bash
+        run: |
+          BIN=source_c/build/native/can_test_app
           echo "=== --help ==="
           "$BIN" --help
 
@@ -55,7 +74,7 @@ jobs:
           path: source_c/build
 
       - name: Make binary executable
-        run: chmod +x source_c/build/can_test_app
+        run: chmod +x source_c/build/native/can_test_app
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -82,7 +101,7 @@ jobs:
 
       - name: Run binary smoke test on vcan0
         run: |
-          BIN=source_c/build/can_test_app
+          BIN=source_c/build/native/can_test_app
           echo "=== --help ==="
           "$BIN" --help
 
