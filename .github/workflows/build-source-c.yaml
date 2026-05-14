@@ -17,6 +17,17 @@ jobs:
             gcc-aarch64-linux-gnu \
             gcc-arm-linux-gnueabihf
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Generate main.c — dry run (preview)
+        run: python source_c/gen_main.py --dry-run
+
+      - name: Generate main.c from template
+        run: python source_c/gen_main.py
+
       - name: Build C source with Makefile (multi-arch)
         id: build
         shell: bash
@@ -59,6 +70,7 @@ jobs:
             ${{ steps.build.outputs.SRC_DIR }}/build/native/can_test_app
             ${{ steps.build.outputs.SRC_DIR }}/build/aarch64/can_test_app
             ${{ steps.build.outputs.SRC_DIR }}/build/armv7/can_test_app
+            ${{ steps.build.outputs.SRC_DIR }}/src/main.c
           retention-days: 2
           if-no-files-found: error
           compression-level: 6
@@ -71,7 +83,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Download build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: can-ids-binaries
           path: source_c/build
@@ -80,7 +92,7 @@ jobs:
         run: chmod +x source_c/build/native/can_test_app
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
