@@ -32,6 +32,9 @@ jobs:
           sudo ip link set up vcan0
           ip link show vcan0
 
+      - name: Install can-utils
+        run: sudo apt-get install -y can-utils
+
       - name: Test — interface discovery
         run: |
           printf 'q\n' | python tests/simulation/can_attack_sim.py 2>&1 | grep -q "vcan0"
@@ -39,23 +42,43 @@ jobs:
 
       - name: Test — DoS attack (100 frames)
         run: |
+          candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
           printf '1\n1\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat /tmp/candump.pid) 2>/dev/null || true
+          echo "=== candump: DoS ===" && cat /tmp/candump.log
+          truncate -s 0 /tmp/candump.log
 
       - name: Test — Fuzzy attack (100 frames)
         run: |
+          candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
           printf '1\n2\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat /tmp/candump.pid) 2>/dev/null || true
+          echo "=== candump: Fuzzy ===" && cat /tmp/candump.log
+          truncate -s 0 /tmp/candump.log
 
       - name: Test — Gear spoofing (100 frames)
         run: |
+          candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
           printf '1\n3\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat /tmp/candump.pid) 2>/dev/null || true
+          echo "=== candump: Gear ===" && cat /tmp/candump.log
+          truncate -s 0 /tmp/candump.log
 
       - name: Test — RPM spoofing (100 frames)
         run: |
+          candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
           printf '1\n4\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat /tmp/candump.pid) 2>/dev/null || true
+          echo "=== candump: RPM ===" && cat /tmp/candump.log
+          truncate -s 0 /tmp/candump.log
 
       - name: Test — Manual hand input
         run: |
+          candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
           printf '1\n5\n1\n043F 01 45 60 FF 6B 00 00 00\nrepeat 5 0.001\nrepeat abc\n0316 45 29 24 FF 29 24 00 FF\ndone\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat /tmp/candump.pid) 2>/dev/null || true
+          echo "=== candump: Manual ===" && cat /tmp/candump.log
+          truncate -s 0 /tmp/candump.log
 
       - name: Test — Manual CSV replay
         run: |
@@ -67,7 +90,11 @@ jobs:
           1478198377.187116,02fd,8,3f,bd,68,f3,c3,4f,28,d4,T
           1478198377.188000,0100,8,aa,bb,cc,dd,ee,ff,00,11,R
           EOF
+          candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
           printf '1\n5\n2\n/tmp/test_attack.csv\nb\ny\n0\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat /tmp/candump.pid) 2>/dev/null || true
+          echo "=== candump: CSV Replay ===" && cat /tmp/candump.log
+          truncate -s 0 /tmp/candump.log
 
       - name: Tear down virtual CAN
         if: always()

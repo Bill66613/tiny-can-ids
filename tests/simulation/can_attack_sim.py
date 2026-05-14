@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import random
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -37,6 +38,9 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Interface discovery
 # ---------------------------------------------------------------------------
+
+_VIRTUAL_SENTINEL = "__virtual__"
+
 
 def discover_can_interfaces() -> list[str]:
     """Scan /sys/class/net for CAN-capable interfaces (including vcan)."""
@@ -62,18 +66,20 @@ def discover_can_interfaces() -> list[str]:
 
 
 def choose_interface() -> str:
-    """Let the user pick a CAN interface interactively."""
+    """Let the user pick a CAN interface interactively.
+
+    Returns either an interface name (e.g. ``vcan0``) or the sentinel
+    ``_VIRTUAL_SENTINEL`` when the python-can virtual bus should be used.
+    """
     interfaces = discover_can_interfaces()
     if not interfaces:
         print("\n  No CAN interfaces found on this machine.")
         print("  To create a virtual CAN interface run:")
         print("    sudo modprobe vcan")
         print("    sudo ip link add dev vcan0 type vcan")
-        print("    sudo ip link set up vcan0\n")
-        ans = input("Enter interface name manually (or 'q' to quit): ").strip()
-        if ans.lower() == "q":
-            sys.exit(0)
-        return ans
+        print("    sudo ip link set up vcan0")
+        print("  Using python-can virtual bus (in-process simulation, no kernel module needed).\n")
+        return _VIRTUAL_SENTINEL
 
     print("\n  Available CAN interfaces:")
     for i, iface in enumerate(interfaces, 1):
@@ -238,8 +244,8 @@ def manual_csv_load(bus: can.Bus) -> None:
     timing_choice = input("  Use original timing? [y/n] (default: y): ").strip().lower()
     use_timing = timing_choice != "n"
 
-    max_str = input("  Max frames to send (0 = all, default 5000): ").strip()
-    max_frames = int(max_str) if max_str else 5000
+    type = "attack" if not send_all else "all"
+    print(f"  Send {type} frames \n")
 
     # Parse CSV
     frames: list[tuple[float, can.Message]] = []
@@ -285,9 +291,6 @@ def manual_csv_load(bus: can.Bus) -> None:
             frame = can.Message(arbitration_id=arb_id, data=data, is_extended_id=False)
             frames.append((ts_f, frame))
 
-            if 0 < max_frames <= len(frames):
-                break
-
     if not frames:
         print("  No frames matched filter criteria.")
         return
@@ -327,6 +330,15 @@ def attack_manual(bus: can.Bus) -> None:
         manual_hand_input(bus)
 
 
+def _candump_listener(bus: can.Bus, stop_event: threading.Event) -> None:
+    """Print received frames in candump format (virtual bus only)."""
+    while not stop_event.is_set():
+        msg = bus.recv(timeout=0.1)
+        if msg:
+            data_hex = msg.data.hex().upper()
+            print(f"  ({msg.timestamp:.6f}) vcan_sim {msg.arbitration_id:03X}#{data_hex}")
+
+
 # ---------------------------------------------------------------------------
 # Main menu
 # ---------------------------------------------------------------------------
@@ -347,15 +359,28 @@ def main() -> None:
     print("=" * 56)
 
     iface = choose_interface()
-    print(f"\n  Using interface: {iface}")
 
-    try:
-        bus = can.Bus(interface="socketcan", channel=iface)
-    except Exception as e:
-        print(f"\n  ERROR: Could not open {iface}: {e}")
-        print("  Make sure the interface is up:")
-        print(f"    sudo ip link set up {iface}")
-        sys.exit(1)
+    if iface == _VIRTUAL_SENTINEL:
+        print("\n  Using: python-can virtual bus (loopback, no hardware needed)")
+        print("  [candump] Frames will be printed below as they are sent.")
+        try:
+            bus = can.Bus(interface="virtual", channel="vcan_sim", receive_own_messages=True)
+        except Exception as e:
+            print(f"\n  ERROR: Could not open virtual bus: {e}")
+            sys.exit(1)
+        stop_event = threading.Event()
+        threading.Thread(target=_candump_listener, args=(bus, stop_event), daemon=True).start()
+    else:
+        print(f"\n  Using interface: {iface}")
+        print(f"  Tip: run 'candump {iface}' in another terminal to monitor frames.")
+        stop_event = None
+        try:
+            bus = can.Bus(interface="socketcan", channel=iface)
+        except Exception as e:
+            print(f"\n  ERROR: Could not open {iface}: {e}")
+            print("  Make sure the interface is up:")
+            print(f"    sudo ip link set up {iface}")
+            sys.exit(1)
 
     try:
         while True:
@@ -374,6 +399,8 @@ def main() -> None:
     except (KeyboardInterrupt, EOFError):
         print()
     finally:
+        if stop_event is not None:
+            stop_event.set()
         bus.shutdown()
         print("  Bus closed. Goodbye.")
 
