@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define APP_VERSION "0.1.0"
+
 typedef enum {
 	ATTACK_DOS,
 	ATTACK_FUZZY,
@@ -26,6 +28,8 @@ typedef struct {
 } app_config_t;
 
 static void print_help(const char *prog_name) {
+	printf("%s v%s\n", prog_name, APP_VERSION);
+	printf("\n");
 	printf("Usage: %s --attack-type <dos|fuzzy|gear|rpm> --model <dt|tnn|lr> --interface <can0|vcan0|...>\n",
 		   prog_name);
 	printf("\n");
@@ -33,6 +37,7 @@ static void print_help(const char *prog_name) {
 	printf("  -a, --attack-type   Attack type: dos, fuzzy, gear, rpm\n");
 	printf("  -m, --model         Model: dt, tnn, lr\n");
 	printf("  -i, --interface     CAN interface name, example: can0, vcan0\n");
+	printf("  -v, --version       Show version\n");
 	printf("  -h, --help          Show this help message\n");
 	printf("\n");
 	printf("Example:\n");
@@ -111,12 +116,13 @@ static bool parse_arguments(int argc, char **argv, app_config_t *cfg) {
 		{"attack-type", required_argument, NULL, 'a'},
 		{"model", required_argument, NULL, 'm'},
 		{"interface", required_argument, NULL, 'i'},
+		{"version", no_argument, NULL, 'v'},
 		{"help", no_argument, NULL, 'h'},
 		{0, 0, 0, 0},
 	};
 
 	int opt = 0;
-	while ((opt = getopt_long(argc, argv, "a:m:i:h", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "a:m:i:vh", long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'a':
 			cfg->attack_type = parse_attack_type(optarg);
@@ -139,6 +145,9 @@ static bool parse_arguments(int argc, char **argv, app_config_t *cfg) {
 				return false;
 			}
 			break;
+		case 'v':
+			printf("%s\n", APP_VERSION);
+			exit(EXIT_SUCCESS);
 		case 'h':
 			print_help(argv[0]);
 			exit(EXIT_SUCCESS);
