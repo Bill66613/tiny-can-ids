@@ -3,9 +3,15 @@ name: Build C source
 on:
   push:
     branches: [nam]
+
+env:
+  SRC_DIR: source_c
+
 jobs:
   build-source-c:
     runs-on: ubuntu-latest
+    outputs:
+      SRC_DIR: ${{ steps.build.outputs.SRC_DIR }}
     steps:
       - uses: actions/checkout@v5
 
@@ -22,20 +28,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Generate main.c — dry run (preview)
-        run: python source_c/gen_main.py --dry-run
-
       - name: Generate main.c from template
-        run: python source_c/gen_main.py
+        run: python ${{ env.SRC_DIR }}/gen_main.py
 
       - name: Build C source with Makefile (multi-arch)
         id: build
         shell: bash
         run: |
-          if [ -d source_c ]; then
-            SRC_DIR=source_c
+          if [ -d "${SRC_DIR}" ]; then
+            SRC_DIR="${SRC_DIR}"
           else
-            echo "::error::Could not find source_c directory"
+            echo "::error::Could not find ${SRC_DIR} directory"
             exit 1
           fi
 
@@ -50,27 +53,32 @@ jobs:
         shell: bash
         run: |
           echo "=== Binary sizes ==="
-          file source_c/build/native/can_test_app
-          file source_c/build/aarch64/can_test_app
-          file source_c/build/armv7/can_test_app
-          ls -lh source_c/build/*/can_test_app
+          file ${{ env.SRC_DIR }}/build/native/can_test_app
+          file ${{ env.SRC_DIR }}/build/aarch64/can_test_app
+          file ${{ env.SRC_DIR }}/build/armv7/can_test_app
+          ls -lh ${{ env.SRC_DIR }}/build/*/can_test_app
 
       - name: Smoke test — native binary
         shell: bash
         run: |
-          BIN=source_c/build/native/can_test_app
+          BIN=${{ env.SRC_DIR }}/build/native/can_test_app
           echo "=== --help ==="
           "$BIN" --help
 
+      - name: Stage generated sources
+        run: |
+          mkdir -p ${{ env.SRC_DIR }}/src-gen
+          cp ${{ env.SRC_DIR }}/src/main.c ${{ env.SRC_DIR }}/src-gen/main.c
+
       - name: Upload build directory as artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: can-ids-binaries
           path: |
             ${{ steps.build.outputs.SRC_DIR }}/build/native/can_test_app
             ${{ steps.build.outputs.SRC_DIR }}/build/aarch64/can_test_app
             ${{ steps.build.outputs.SRC_DIR }}/build/armv7/can_test_app
-            ${{ steps.build.outputs.SRC_DIR }}/src/main.c
+            ${{ steps.build.outputs.SRC_DIR }}/src-gen/main.c
           retention-days: 2
           if-no-files-found: error
           compression-level: 6
@@ -83,13 +91,13 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Download build artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: can-ids-binaries
-          path: source_c/build
+          path: .
 
       - name: Make binary executable
-        run: chmod +x source_c/build/native/can_test_app
+        run: chmod +x ${{ needs.build-source-c.outputs.SRC_DIR }}/build/native/can_test_app
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -116,7 +124,7 @@ jobs:
 
       - name: Run binary smoke test on vcan0
         run: |
-          BIN=source_c/build/native/can_test_app
+          BIN=${{ needs.build-source-c.outputs.SRC_DIR }}/build/native/can_test_app
           echo "=== --help ==="
           "$BIN" --help
 
