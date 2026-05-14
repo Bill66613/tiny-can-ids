@@ -5,7 +5,14 @@ Linux SocketCAN test app for validating the TinyML CAN IDS inference app.
 ## Build
 
 ```bash
+make info
 make
+```
+
+Build output is placed in `build/`:
+
+```bash
+./build/can_test_app --help
 ```
 
 ## Setup vcan0
@@ -34,55 +41,55 @@ sudo apt-get install -y can-utils
 Synthetic normal traffic:
 
 ```bash
-./can_test_app --interface vcan0 --mode synthetic --rate 500 --duration 10
+./build/can_test_app --interface vcan0 --mode synthetic --rate 500 --duration 10
 ```
 
 DoS attack:
 
 ```bash
-./can_test_app --interface vcan0 --mode attack --attack-type dos --rate 1000 --duration 10
+./build/can_test_app --interface vcan0 --mode attack --attack-type dos --rate 1000 --duration 10
 ```
 
 Fuzzy attack:
 
 ```bash
-./can_test_app --interface vcan0 --mode attack --attack-type fuzzy --rate 1000 --duration 10
+./build/can_test_app --interface vcan0 --mode attack --attack-type fuzzy --rate 1000 --duration 10
 ```
 
 Gear spoofing:
 
 ```bash
-./can_test_app --interface vcan0 --mode attack --attack-type gear --rate 100 --duration 10
+./build/can_test_app --interface vcan0 --mode attack --attack-type gear --rate 100 --duration 10
 ```
 
 RPM spoofing:
 
 ```bash
-./can_test_app --interface vcan0 --mode attack --attack-type rpm --rate 100 --duration 10
+./build/can_test_app --interface vcan0 --mode attack --attack-type rpm --rate 100 --duration 10
 ```
 
 Replay CSV:
 
 ```bash
-./can_test_app --interface vcan0 --mode replay --dataset sample.csv --rate 500
+./build/can_test_app --interface vcan0 --mode replay --dataset sample.csv --rate 500
 ```
 
 Replay by timestamp:
 
 ```bash
-./can_test_app --interface vcan0 --mode replay --dataset sample.csv --realtime
+./build/can_test_app --interface vcan0 --mode replay --dataset sample.csv --realtime
 ```
 
 Loop replay:
 
 ```bash
-./can_test_app --interface vcan0 --mode replay --dataset sample.csv --loop --duration 60
+./build/can_test_app --interface vcan0 --mode replay --dataset sample.csv --loop --duration 60
 ```
 
 JSON stats:
 
 ```bash
-./can_test_app --interface vcan0 --mode attack --attack-type dos --json
+./build/can_test_app --interface vcan0 --mode attack --attack-type dos --json
 ```
 
 ## CSV format
@@ -121,19 +128,19 @@ The `Makefile` links `tiny_ids_tnn_inference.c`, and that file includes `tiny_id
 ### Generate traffic and run inference on sent frames
 
 ```bash
-./can_test_app --interface vcan0 --mode attack --attack-type dos --rate 1000 --duration 10 --infer-sent
+./build/can_test_app --interface vcan0 --mode attack --attack-type dos --rate 1000 --duration 10 --infer-sent
 ```
 
 ### Run IDS monitor only
 
 ```bash
-./can_test_app --interface vcan0 --mode ids --duration 30 --ids-window 64
+./build/can_test_app --interface vcan0 --mode ids --duration 30 --ids-window 64
 ```
 
 Then send traffic from another terminal:
 
 ```bash
-./can_test_app --interface vcan0 --mode attack --attack-type fuzzy --rate 1000 --duration 10
+./build/can_test_app --interface vcan0 --mode attack --attack-type fuzzy --rate 1000 --duration 10
 ```
 
 Note: `ids_runtime.c` currently builds a 46-element feature vector from a sliding SocketCAN window. Keep this feature extractor aligned with the Python training feature engineering for best accuracy.

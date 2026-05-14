@@ -23,15 +23,24 @@ jobs:
           echo "SRC_DIR=$SRC_DIR" >> $GITHUB_OUTPUT
           echo "Building in ./$SRC_DIR"
           make -C "$SRC_DIR"
-          test -f "$SRC_DIR/can_test_app"
+          test -f "$SRC_DIR/build/can_test_app"
 
-      - name: Upload artifacts
+      - name: Smoke test — print help and run example
+        shell: bash
+        run: |
+          BIN=source_c/build/can_test_app
+          echo "=== --help ==="
+          "$BIN" --help
+
+          echo "=== example: dos / tnn / vcan0 ==="
+          "$BIN" --attack-type dos --model tnn --interface vcan0
+
+      - name: Upload build directory as artifact
         uses: actions/upload-artifact@v6
         with:
           name: output-c
-          path: ${{ steps.build.outputs.SRC_DIR }}/can_test_app
-          retention-days: 1
-          if-no-files-found: warn
+          path: ${{ steps.build.outputs.SRC_DIR }}/build/
+          retention-days: 7
+          if-no-files-found: error
           compression-level: 6
-          overwrite: false
-          include-hidden-files: false
+          overwrite: true
