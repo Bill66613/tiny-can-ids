@@ -1,10 +1,25 @@
 #include <getopt.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
-#define APP_VERSION "0.1.0"
+#include "models/dos_ids_dt_weights.h"
+
+#ifdef __linux__
+#include <errno.h>
+#include <linux/can.h>
+#include <linux/can/raw.h>
+#include <net/if.h>
+#include <signal.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
+#define APP_VERSION "0.2.0"
 
 typedef enum {
 	ATTACK_DOS,
@@ -17,7 +32,7 @@ typedef enum {
 typedef enum {
 	MODEL_DT,
 	MODEL_TNN,
-	MODEL_LR,
+	MODEL_RL,
 	MODEL_UNKNOWN
 } model_type_t;
 
@@ -25,23 +40,231 @@ typedef struct {
 	attack_type_t attack_type;
 	model_type_t model;
 	const char *interface_name;
+	int frame_count;
 } app_config_t;
+
+static const char *attack_type_to_string(attack_type_t attack_type);
+static const char *model_type_to_string(model_type_t model);
+
+#ifdef __linux__
+#define MAX_WINDOW_FRAMES 2048
+
+static volatile sig_atomic_t g_stop_requested = 0;
+
+static void handle_stop_signal(int signum) {
+	(void)signum;
+	g_stop_requested = 1;
+}
+
+static int open_can_socket(const char *interface_name) {
+	int fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
+	if (fd < 0) {
+		perror("socket(PF_CAN)");
+		return -1;
+	}
+
+	struct ifreq ifr;
+	memset(&ifr, 0, sizeof(ifr));
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", interface_name);
+
+	if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0) {
+		perror("ioctl(SIOCGIFINDEX)");
+		close(fd);
+		return -1;
+	}
+
+	struct sockaddr_can addr;
+	memset(&addr, 0, sizeof(addr));
+	addr.can_family = AF_CAN;
+	addr.can_ifindex = ifr.ifr_ifindex;
+
+	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		perror("bind(AF_CAN)");
+		close(fd);
+		return -1;
+	}
+
+	return fd;
+}
+
+static double now_timestamp_us(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	return (double)ts.tv_sec * 1000000.0 + (double)ts.tv_nsec / 1000.0;
+}
+
+static void process_can_window_x(
+	const CAN_Frame_t *window,
+	int start_index,
+	int frame_count,
+	const app_config_t *cfg
+) {
+	int oldest_idx = start_index;
+	int newest_idx = (start_index + frame_count - 1) % frame_count;
+	uint32_t oldest_id = window[oldest_idx].id & CAN_SFF_MASK;
+	uint32_t newest_id = window[newest_idx].id & CAN_SFF_MASK;
+
+	printf(
+		"[X] process window attack=%s model=%s size=%d oldest=0x%03X newest=0x%03X\n",
+		attack_type_to_string(cfg->attack_type),
+		model_type_to_string(cfg->model),
+		frame_count,
+		oldest_id,
+		newest_id
+	);
+}
+
+/* ---------------------------------------------------------------------------
+ * Handler table: one entry per (attack_type, model) combination.
+ * Add a new row when a new model implementation is available.
+ * ---------------------------------------------------------------------------
+ * Each entry holds:
+ *   - fn           : function pointer matching process_window_fn_t
+ *   - window_size  : expected frame_count for this model
+ *   - label        : human-readable name for log output
+ * --------------------------------------------------------------------------- */
+typedef int (*process_window_fn_t)(const CAN_Frame_t *window);
+
+typedef struct {
+	attack_type_t attack_type;
+	model_type_t model;
+	process_window_fn_t fn;
+	int window_size;
+	const char *label;
+} handler_entry_t;
+
+static const handler_entry_t g_handler_table[] = {
+	{ATTACK_DOS,   MODEL_DT,  dos_ids_dt_process_window,  DOS_IDS_DT_WINDOW_SIZE, "dos/dt"},
+	/* Add more entries here, for example:
+	 * {ATTACK_DOS,   MODEL_TNN, dos_ids_tnn_process_window, DOS_IDS_TNN_WINDOW_SIZE, "dos/tnn"},
+	 * {ATTACK_FUZZY, MODEL_DT,  fuzzy_ids_dt_process_window, FUZZY_IDS_DT_WINDOW_SIZE, "fuzzy/dt"},
+	 */
+};
+
+static const int g_handler_table_size =
+	(int)(sizeof(g_handler_table) / sizeof(g_handler_table[0]));
+
+static int dispatch_process_window(
+	const CAN_Frame_t *window,
+	int start_index,
+	int frame_count,
+	const app_config_t *cfg
+) {
+	CAN_Frame_t ordered_window[MAX_WINDOW_FRAMES];
+	for (int i = 0; i < frame_count; i++) {
+		ordered_window[i] = window[(start_index + i) % frame_count];
+	}
+
+	for (int i = 0; i < g_handler_table_size; i++) {
+		const handler_entry_t *entry = &g_handler_table[i];
+		if (entry->attack_type != cfg->attack_type || entry->model != cfg->model) {
+			continue;
+		}
+
+		if (frame_count != entry->window_size) {
+			fprintf(
+				stderr,
+				"Error: %s expects frame_count=%d, got %d.\n",
+				entry->label,
+				entry->window_size,
+				frame_count
+			);
+			return -1;
+		}
+
+		int pred = entry->fn(ordered_window);
+		printf("[MODEL] %s prediction=%d\n", entry->label, pred);
+		return 0;
+	}
+
+	/* Fallback: no handler registered for this (attack_type, model) combination. */
+	printf("[WARN] no handler for attack=%s model=%s — using stub.\n",
+		attack_type_to_string(cfg->attack_type),
+		model_type_to_string(cfg->model));
+	process_can_window_x(window, start_index, frame_count, cfg);
+	return 0;
+}
+
+static int listen_for_can_frames(int fd, const app_config_t *cfg) {
+	if (cfg->frame_count <= 0 || cfg->frame_count > MAX_WINDOW_FRAMES) {
+		fprintf(stderr, "Error: frame_count must be in range 1..%d.\n", MAX_WINDOW_FRAMES);
+		return -1;
+	}
+
+	CAN_Frame_t window[MAX_WINDOW_FRAMES];
+	int filled = 0;
+	int start_index = 0;
+
+	while (!g_stop_requested) {
+		struct can_frame frame;
+		ssize_t nread = read(fd, &frame, sizeof(frame));
+		if (nread < 0) {
+			if (errno == EINTR && g_stop_requested) {
+				break;
+			}
+			perror("read(can_frame)");
+			return -1;
+		}
+
+		if ((size_t)nread < sizeof(struct can_frame)) {
+			fprintf(stderr, "Short CAN frame read (%zd bytes).\n", nread);
+			return -1;
+		}
+
+		CAN_Frame_t sample;
+		sample.timestamp = now_timestamp_us();
+		sample.id = frame.can_id & CAN_SFF_MASK;
+		sample.dlc = frame.can_dlc;
+		memset(sample.data, 0, sizeof(sample.data));
+		memcpy(sample.data, frame.data, (size_t)frame.can_dlc);
+
+		printf("[CAN] id=0x%03X dlc=%d data=", sample.id & CAN_SFF_MASK, sample.dlc);
+		for (int j = 0; j < sample.dlc; j++) {
+			printf("%02X", sample.data[j]);
+			if (j + 1 < sample.dlc) {
+				printf(" ");
+			}
+		}
+		printf("\n");
+
+		if (filled < cfg->frame_count) {
+			window[filled] = sample;
+			filled++;
+		} else {
+			window[start_index] = sample;
+			start_index = (start_index + 1) % cfg->frame_count;
+		}
+
+		if (filled == cfg->frame_count) {
+			if (dispatch_process_window(window, start_index, cfg->frame_count, cfg) != 0) {
+				return -1;
+			}
+		}
+	}
+
+	printf("Stop signal received. Exiting CAN listen loop.\n");
+
+	return 0;
+}
+#endif
 
 static void print_help(const char *prog_name) {
 	printf("%s v%s\n", prog_name, APP_VERSION);
 	printf("\n");
-	printf("Usage: %s --attack-type <dos|fuzzy|gear|rpm> --model <dt|tnn|lr> --interface <can0|vcan0|...>\n",
+	printf("Usage: %s --attack-type <dos|fuzzy|gear|rpm> --model <dt|tnn|rl> --interface <can0|vcan0|...>\n",
 		   prog_name);
 	printf("\n");
 	printf("Options:\n");
 	printf("  -a, --attack-type   Attack type: dos, fuzzy, gear, rpm\n");
-	printf("  -m, --model         Model: dt, tnn, lr\n");
+	printf("  -m, --model         Model (mode): dt, tnn, rl\n");
+	printf("      --mode          Alias of --model\n");
 	printf("  -i, --interface     CAN interface name, example: can0, vcan0\n");
 	printf("  -v, --version       Show version\n");
 	printf("  -h, --help          Show this help message\n");
 	printf("\n");
 	printf("Example:\n");
 	printf("  %s --attack-type dos --model tnn --interface vcan0\n", prog_name);
+	printf("  Stop listening with Ctrl+C (SIGINT) or kill (SIGTERM).\n");
 }
 
 static attack_type_t parse_attack_type(const char *value) {
@@ -76,8 +299,8 @@ static model_type_t parse_model_type(const char *value) {
 	if (strcmp(value, "tnn") == 0) {
 		return MODEL_TNN;
 	}
-	if (strcmp(value, "lr") == 0) {
-		return MODEL_LR;
+	if (strcmp(value, "rl") == 0) {
+		return MODEL_RL;
 	}
 
 	return MODEL_UNKNOWN;
@@ -104,10 +327,61 @@ static const char *model_type_to_string(model_type_t model) {
 		return "dt";
 	case MODEL_TNN:
 		return "tnn";
-	case MODEL_LR:
-		return "lr";
+	case MODEL_RL:
+		return "rl";
 	default:
 		return "unknown";
+	}
+}
+
+static int select_frame_count(attack_type_t attack_type, model_type_t model) {
+	switch (attack_type) {
+	case ATTACK_DOS:
+		switch (model) {
+		case MODEL_DT:
+			return DOS_IDS_DT_WINDOW_SIZE;
+		case MODEL_TNN:
+			return 16;
+		case MODEL_RL:
+			return 12;
+		default:
+			return 10;
+		}
+	case ATTACK_FUZZY:
+		switch (model) {
+		case MODEL_DT:
+			return 12;
+		case MODEL_TNN:
+			return 20;
+		case MODEL_RL:
+			return 14;
+		default:
+			return 10;
+		}
+	case ATTACK_GEAR:
+		switch (model) {
+		case MODEL_DT:
+			return 6;
+		case MODEL_TNN:
+			return 10;
+		case MODEL_RL:
+			return 8;
+		default:
+			return 10;
+		}
+	case ATTACK_RPM:
+		switch (model) {
+		case MODEL_DT:
+			return 10;
+		case MODEL_TNN:
+			return 18;
+		case MODEL_RL:
+			return 12;
+		default:
+			return 10;
+		}
+	default:
+		return 10;
 	}
 }
 
@@ -115,6 +389,7 @@ static bool parse_arguments(int argc, char **argv, app_config_t *cfg) {
 	static const struct option long_options[] = {
 		{"attack-type", required_argument, NULL, 'a'},
 		{"model", required_argument, NULL, 'm'},
+		{"mode", required_argument, NULL, 'm'},
 		{"interface", required_argument, NULL, 'i'},
 		{"version", no_argument, NULL, 'v'},
 		{"help", no_argument, NULL, 'h'},
@@ -134,7 +409,7 @@ static bool parse_arguments(int argc, char **argv, app_config_t *cfg) {
 		case 'm':
 			cfg->model = parse_model_type(optarg);
 			if (cfg->model == MODEL_UNKNOWN) {
-				fprintf(stderr, "Error: invalid model '%s'. Use dt|tnn|lr.\n", optarg);
+				fprintf(stderr, "Error: invalid model '%s'. Use dt|tnn|rl.\n", optarg);
 				return false;
 			}
 			break;
@@ -171,18 +446,45 @@ int main(int argc, char **argv) {
 		.attack_type = ATTACK_UNKNOWN,
 		.model = MODEL_UNKNOWN,
 		.interface_name = NULL,
+		.frame_count = 10,
 	};
 
 	if (!parse_arguments(argc, argv, &cfg)) {
 		return EXIT_FAILURE;
 	}
 
+	/* Frame count is selected from the (attack_type, model) combination. */
+	cfg.frame_count = select_frame_count(cfg.attack_type, cfg.model);
+
 	printf("Tiny CAN IDS app starting...\n");
 	printf("  attack_type: %s\n", attack_type_to_string(cfg.attack_type));
 	printf("  model      : %s\n", model_type_to_string(cfg.model));
 	printf("  interface  : %s\n", cfg.interface_name);
+	printf("  frame_count: %d\n", cfg.frame_count);
 	printf("\n");
-	printf("Helper: runtime logic will be added in next step.\n");
+
+#ifdef __linux__
+	printf("Listen mode enabled.\n");
+	printf("  frames      : %d\n", cfg.frame_count);
+
+	signal(SIGINT, handle_stop_signal);
+	signal(SIGTERM, handle_stop_signal);
+
+	int can_fd = open_can_socket(cfg.interface_name);
+	if (can_fd < 0) {
+		return EXIT_FAILURE;
+	}
+
+	printf("SocketCAN bound on '%s'. Listening...\n", cfg.interface_name);
+	int listen_rc = listen_for_can_frames(can_fd, &cfg);
+	close(can_fd);
+	if (listen_rc != 0) {
+		return EXIT_FAILURE;
+	}
+#else
+	fprintf(stderr, "Error: --listen is supported only on Linux (SocketCAN).\n");
+	return EXIT_FAILURE;
+#endif
 
 	return EXIT_SUCCESS;
 }
