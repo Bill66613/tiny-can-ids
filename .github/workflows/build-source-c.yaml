@@ -52,11 +52,14 @@ jobs:
           "$BIN" --help
 
       - name: Upload build directory as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: output-c
-          path: ${{ steps.build.outputs.SRC_DIR }}/build/
-          retention-days: 7
+          name: can-ids-binaries
+          path: |
+            ${{ steps.build.outputs.SRC_DIR }}/build/native/can_test_app
+            ${{ steps.build.outputs.SRC_DIR }}/build/aarch64/can_test_app
+            ${{ steps.build.outputs.SRC_DIR }}/build/armv7/can_test_app
+          retention-days: 2
           if-no-files-found: error
           compression-level: 6
           overwrite: true
@@ -70,7 +73,7 @@ jobs:
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: output-c
+          name: can-ids-binaries
           path: source_c/build
 
       - name: Make binary executable
