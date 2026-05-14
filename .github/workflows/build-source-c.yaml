@@ -96,9 +96,6 @@ jobs:
           name: can-ids-binaries
           path: ${{ needs.build-source-c.outputs.SRC_DIR }}
 
-      - name: List downloaded files
-        run: find . -type f
-
       - name: Make binary executable
         run: chmod +x ${{ needs.build-source-c.outputs.SRC_DIR }}/build/native/can_test_app
 
@@ -128,10 +125,20 @@ jobs:
       - name: Run binary smoke test on vcan0
         run: |
           BIN=${{ needs.build-source-c.outputs.SRC_DIR }}/build/native/can_test_app
-          echo "=== --help ==="
+
+          echo "========================================"
+          echo " Smoke test: native binary on vcan0"
+          echo "========================================"
+          echo "Binary: $BIN"
+          echo ""
+
+          echo "[1/2] Help output"
+          echo "$BIN --help"
           "$BIN" --help
 
-          echo "=== example: dos / dt / vcan0 ==="
+          echo ""
+          echo "[2/2] Runtime check (dos/dt, timeout=5s)"
+          echo "$BIN --attack-type dos --model dt --interface vcan0 --timeout 5"
           "$BIN" --attack-type dos --model dt --interface vcan0 --timeout 5
 
       - name: Tear down virtual CAN
