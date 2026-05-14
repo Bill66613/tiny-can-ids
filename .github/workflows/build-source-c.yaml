@@ -71,7 +71,7 @@ jobs:
           cp ${{ env.SRC_DIR }}/src/main.c ${{ env.SRC_DIR }}/src-gen/main.c
 
       - name: Upload build directory as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: can-ids-binaries
           path: |
@@ -94,7 +94,7 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           name: can-ids-binaries
-          path: .
+          path: ${{ needs.build-source-c.outputs.SRC_DIR }}
 
       - name: List downloaded files
         run: find . -type f
