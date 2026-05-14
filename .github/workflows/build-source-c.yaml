@@ -86,8 +86,8 @@ jobs:
           echo "=== --help ==="
           "$BIN" --help
 
-          echo "=== example: dos / tnn / vcan0 ==="
-          "$BIN" --attack-type dos --model tnn --interface vcan0
+          echo "=== example: dos / dt / vcan0 ==="
+          "$BIN" --attack-type dos --model dt --interface vcan0 --timeout 5
 
       - name: Tear down virtual CAN
         if: always()

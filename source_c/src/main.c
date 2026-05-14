@@ -15,11 +15,12 @@
 #include <net/if.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
 
-#define APP_VERSION "0.2.0"
+#define APP_VERSION "0.3.0"
 
 typedef enum {
 	ATTACK_DOS,
@@ -41,10 +42,44 @@ typedef struct {
 	model_type_t model;
 	const char *interface_name;
 	int frame_count;
+	int timeout_sec; /* <= 0 means run forever */
 } app_config_t;
 
 static const char *attack_type_to_string(attack_type_t attack_type);
 static const char *model_type_to_string(model_type_t model);
+
+/* ---------------------------------------------------------------------------
+ * Handler table: one entry per (attack_type, model) combination.
+ * Defined outside #ifdef __linux__ so select_frame_count can use window_size
+ * without duplicating the values.
+ * ---------------------------------------------------------------------------
+ * Each entry holds:
+ *   - fn           : function pointer matching process_window_fn_t
+ *   - window_size  : expected frame_count for this model
+ *   - label        : human-readable name for log output
+ * --------------------------------------------------------------------------- */
+typedef int (*process_window_fn_t)(const CAN_Frame_t *window);
+
+typedef struct {
+	attack_type_t attack_type;
+	model_type_t model;
+	process_window_fn_t fn;
+	int window_size;
+	const char *label;
+} handler_entry_t;
+
+static const handler_entry_t g_handler_table[] = {
+	{ATTACK_DOS,   MODEL_DT,  dos_ids_dt_process_window,  DOS_IDS_DT_WINDOW_SIZE, "dos/dt"},
+	/* Add more entries here, for example:
+	 * {ATTACK_DOS,   MODEL_TNN, dos_ids_tnn_process_window, DOS_IDS_TNN_WINDOW_SIZE, "dos/tnn"},
+	 * {ATTACK_FUZZY, MODEL_DT,  fuzzy_ids_dt_process_window, FUZZY_IDS_DT_WINDOW_SIZE, "fuzzy/dt"},
+	 */
+};
+
+static const int g_handler_table_size =
+	(int)(sizeof(g_handler_table) / sizeof(g_handler_table[0]));
+
+#define DEFAULT_WINDOW_SIZE 10
 
 #ifdef __linux__
 #define MAX_WINDOW_FRAMES 2048
@@ -114,36 +149,6 @@ static void process_can_window_x(
 	);
 }
 
-/* ---------------------------------------------------------------------------
- * Handler table: one entry per (attack_type, model) combination.
- * Add a new row when a new model implementation is available.
- * ---------------------------------------------------------------------------
- * Each entry holds:
- *   - fn           : function pointer matching process_window_fn_t
- *   - window_size  : expected frame_count for this model
- *   - label        : human-readable name for log output
- * --------------------------------------------------------------------------- */
-typedef int (*process_window_fn_t)(const CAN_Frame_t *window);
-
-typedef struct {
-	attack_type_t attack_type;
-	model_type_t model;
-	process_window_fn_t fn;
-	int window_size;
-	const char *label;
-} handler_entry_t;
-
-static const handler_entry_t g_handler_table[] = {
-	{ATTACK_DOS,   MODEL_DT,  dos_ids_dt_process_window,  DOS_IDS_DT_WINDOW_SIZE, "dos/dt"},
-	/* Add more entries here, for example:
-	 * {ATTACK_DOS,   MODEL_TNN, dos_ids_tnn_process_window, DOS_IDS_TNN_WINDOW_SIZE, "dos/tnn"},
-	 * {ATTACK_FUZZY, MODEL_DT,  fuzzy_ids_dt_process_window, FUZZY_IDS_DT_WINDOW_SIZE, "fuzzy/dt"},
-	 */
-};
-
-static const int g_handler_table_size =
-	(int)(sizeof(g_handler_table) / sizeof(g_handler_table[0]));
-
 static int dispatch_process_window(
 	const CAN_Frame_t *window,
 	int start_index,
@@ -195,7 +200,42 @@ static int listen_for_can_frames(int fd, const app_config_t *cfg) {
 	int filled = 0;
 	int start_index = 0;
 
+	const int has_deadline = (cfg->timeout_sec > 0);
+	struct timespec deadline = {0, 0};
+	if (has_deadline) {
+		clock_gettime(CLOCK_MONOTONIC, &deadline);
+		deadline.tv_sec += cfg->timeout_sec;
+	}
+
 	while (!g_stop_requested) {
+		if (has_deadline) {
+			struct timespec now;
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			long remaining_ns =
+				(deadline.tv_sec - now.tv_sec) * 1000000000L +
+				(deadline.tv_nsec - now.tv_nsec);
+			if (remaining_ns <= 0) {
+				printf("Timeout reached (%ds). Stopping.\n", cfg->timeout_sec);
+				break;
+			}
+			fd_set rfds;
+			FD_ZERO(&rfds);
+			FD_SET(fd, &rfds);
+			struct timeval tv;
+			tv.tv_sec  = remaining_ns / 1000000000L;
+			tv.tv_usec = (remaining_ns % 1000000000L) / 1000L;
+			int sel = select(fd + 1, &rfds, NULL, NULL, &tv);
+			if (sel < 0) {
+				if (errno == EINTR && g_stop_requested) break;
+				perror("select");
+				return -1;
+			}
+			if (sel == 0) {
+				printf("Timeout reached (%ds). Stopping.\n", cfg->timeout_sec);
+				break;
+			}
+		}
+
 		struct can_frame frame;
 		ssize_t nread = read(fd, &frame, sizeof(frame));
 		if (nread < 0) {
@@ -259,6 +299,7 @@ static void print_help(const char *prog_name) {
 	printf("  -m, --model         Model (mode): dt, tnn, rl\n");
 	printf("      --mode          Alias of --model\n");
 	printf("  -i, --interface     CAN interface name, example: can0, vcan0\n");
+	printf("  -t, --timeout       Stop after N seconds (<=0 = run forever, default: 0)\n");
 	printf("  -v, --version       Show version\n");
 	printf("  -h, --help          Show this help message\n");
 	printf("\n");
@@ -335,54 +376,13 @@ static const char *model_type_to_string(model_type_t model) {
 }
 
 static int select_frame_count(attack_type_t attack_type, model_type_t model) {
-	switch (attack_type) {
-	case ATTACK_DOS:
-		switch (model) {
-		case MODEL_DT:
-			return DOS_IDS_DT_WINDOW_SIZE;
-		case MODEL_TNN:
-			return 16;
-		case MODEL_RL:
-			return 12;
-		default:
-			return 10;
+	for (int i = 0; i < g_handler_table_size; i++) {
+		if (g_handler_table[i].attack_type == attack_type &&
+		    g_handler_table[i].model == model) {
+			return g_handler_table[i].window_size;
 		}
-	case ATTACK_FUZZY:
-		switch (model) {
-		case MODEL_DT:
-			return 12;
-		case MODEL_TNN:
-			return 20;
-		case MODEL_RL:
-			return 14;
-		default:
-			return 10;
-		}
-	case ATTACK_GEAR:
-		switch (model) {
-		case MODEL_DT:
-			return 6;
-		case MODEL_TNN:
-			return 10;
-		case MODEL_RL:
-			return 8;
-		default:
-			return 10;
-		}
-	case ATTACK_RPM:
-		switch (model) {
-		case MODEL_DT:
-			return 10;
-		case MODEL_TNN:
-			return 18;
-		case MODEL_RL:
-			return 12;
-		default:
-			return 10;
-		}
-	default:
-		return 10;
 	}
+	return DEFAULT_WINDOW_SIZE;
 }
 
 static bool parse_arguments(int argc, char **argv, app_config_t *cfg) {
@@ -391,13 +391,14 @@ static bool parse_arguments(int argc, char **argv, app_config_t *cfg) {
 		{"model", required_argument, NULL, 'm'},
 		{"mode", required_argument, NULL, 'm'},
 		{"interface", required_argument, NULL, 'i'},
+		{"timeout", required_argument, NULL, 't'},
 		{"version", no_argument, NULL, 'v'},
 		{"help", no_argument, NULL, 'h'},
 		{0, 0, 0, 0},
 	};
 
 	int opt = 0;
-	while ((opt = getopt_long(argc, argv, "a:m:i:vh", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "a:m:i:t:vh", long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'a':
 			cfg->attack_type = parse_attack_type(optarg);
@@ -420,6 +421,16 @@ static bool parse_arguments(int argc, char **argv, app_config_t *cfg) {
 				return false;
 			}
 			break;
+		case 't': {
+			char *endptr = NULL;
+			long val = strtol(optarg, &endptr, 10);
+			if (endptr == optarg || *endptr != '\0') {
+				fprintf(stderr, "Error: invalid timeout '%s'. Must be an integer.\n", optarg);
+				return false;
+			}
+			cfg->timeout_sec = (int)val;
+			break;
+		}
 		case 'v':
 			printf("%s\n", APP_VERSION);
 			exit(EXIT_SUCCESS);
@@ -447,6 +458,7 @@ int main(int argc, char **argv) {
 		.model = MODEL_UNKNOWN,
 		.interface_name = NULL,
 		.frame_count = 10,
+		.timeout_sec = 0,
 	};
 
 	if (!parse_arguments(argc, argv, &cfg)) {
@@ -461,6 +473,11 @@ int main(int argc, char **argv) {
 	printf("  model      : %s\n", model_type_to_string(cfg.model));
 	printf("  interface  : %s\n", cfg.interface_name);
 	printf("  frame_count: %d\n", cfg.frame_count);
+	if (cfg.timeout_sec > 0) {
+		printf("  timeout    : %ds\n", cfg.timeout_sec);
+	} else {
+		printf("  timeout    : none (run forever)\n");
+	}
 	printf("\n");
 
 #ifdef __linux__
