@@ -24,7 +24,7 @@ else ifeq ($(ARCH),aarch64)
   override CC  := $(CROSS_PREFIX)gcc
 else ifeq ($(ARCH),armv7)
   CROSS_PREFIX := arm-linux-gnueabihf-
-  ARCH_CFLAGS  := -march=armv7-a
+  ARCH_CFLAGS  :=
   override CC  := $(CROSS_PREFIX)gcc
 else
   $(error Unknown ARCH '$(ARCH)'. Valid: native x86_64 aarch64 armv7)
