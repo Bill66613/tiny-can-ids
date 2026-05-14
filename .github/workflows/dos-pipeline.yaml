@@ -23,6 +23,12 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      - name: Download Dataset from Dropbox
+        run: |
+          mkdir -p dataset
+          echo "Downloading DoS_dataset.csv..."
+          wget -O dataset/DoS_dataset.csv "https://www.dropbox.com/scl/fo/9rwsf9pclhvv9xxloojom/AFCn22TGN0tRVpNMDCq2F2Y/DoS_dataset.csv?rlkey=3h6zamu3kc262lrnipu5qden8&e=1&dl=1"
+
       - name: Run DoS Pipeline
         run: |
           echo "Running pipeline to generate models..."
