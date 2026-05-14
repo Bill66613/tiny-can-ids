@@ -13,20 +13,23 @@ ARCH ?= native
 ifeq ($(ARCH),native)
   CROSS_PREFIX :=
   ARCH_CFLAGS  :=
+  CC           ?= gcc
 else ifeq ($(ARCH),x86_64)
   CROSS_PREFIX := x86_64-linux-gnu-
   ARCH_CFLAGS  := -m64
+  override CC  := $(CROSS_PREFIX)gcc
 else ifeq ($(ARCH),aarch64)
   CROSS_PREFIX := aarch64-linux-gnu-
   ARCH_CFLAGS  :=
+  override CC  := $(CROSS_PREFIX)gcc
 else ifeq ($(ARCH),armv7)
   CROSS_PREFIX := arm-linux-gnueabihf-
-  ARCH_CFLAGS  := -march=armv7-a -mfpu=neon-fp-armv8 -mfloat-abi=hard
+  ARCH_CFLAGS  := -march=armv7-a
+  override CC  := $(CROSS_PREFIX)gcc
 else
   $(error Unknown ARCH '$(ARCH)'. Valid: native x86_64 aarch64 armv7)
 endif
 
-CC      ?= $(CROSS_PREFIX)gcc
 CFLAGS  ?= -D_GNU_SOURCE -O2 -Wall -Wextra -std=c11 $(ARCH_CFLAGS)
 LDFLAGS ?= -lm
 
