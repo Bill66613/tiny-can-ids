@@ -390,81 +390,182 @@ def run_dos_specific_pipeline(args, output_dir: Path):
     End-to-end pipeline specifically optimized for DoS Attack Detection.
     Uses Decision Tree as the priority model.
     """
-    import joblib
-    from can_ids.features import build_dos_feature_matrix
+    import json
+    from can_ids.features import build_dos_feature_matrix, build_dos_tnn_feature_matrix
     from can_ids.data.loader import load_can_dataset
     from can_ids.data import preprocess_can_data
-    from can_ids.models import train_decision_tree
+    from can_ids.models import train_decision_tree, TinyNeuralNetwork
     from can_ids.models.compress import export_decision_tree_structure
-    from can_ids.deploy import export_model_to_c
+    from can_ids.deploy import export_dos_model_to_c
+    from can_ids.models.export import export_to_tflite, save_tflite_model
     from sklearn.model_selection import train_test_split
-    from sklearn.metrics import classification_report
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.metrics import classification_report, accuracy_score, f1_score
 
-    logger.info("=== Starting DoS-Specific Pipeline ===")
+    logger.info("=== Starting Integrated DoS Pipeline (DT 8-feat + TNN 12-feat) ===")
 
-    # 1. Load DoS Data
-    # if not args.dataset:
-    #     logger.error("Please provide --dataset path to DoS_dataset.csv")
-    #     return
-
-    logger.info("Loading DoS dataset from %s", "dataset/DoS_dataset.csv")
-    raw_df_0 = load_can_dataset("dataset/DoS_dataset.csv")
-    logger.info("Loading DoS dataset from %s", "dataset/DoS_1111_dataset.csv")
-    raw_df_1 = load_can_dataset("dataset/DoS_1111_dataset.csv")
-
-    # 2. Preprocess & Feature Engineering 
-    # Recommended window size for DoS is typically 50 to quickly detect rate spikes
+    # =========================================================
+    # 1. LOAD DATA & GENERAL PREPROCESSING
+    # =========================================================
+    if not args.dataset:
+        logger.error("Vui lòng cung cấp đường dẫn --dataset tới file DoS_dataset.csv")
+        return
+    
+    logger.info("Loading DoS dataset from %s", args.dataset)
+    raw_df = load_can_dataset(args.dataset)
+    df = preprocess_can_data(raw_df)
+    
     window_size = args.window_size if args.window_size else 50
-    df_0 = preprocess_can_data(raw_df_0)
-    df_1 = preprocess_can_data(raw_df_1)
-
-    logger.info("Extracting features (Timing Δt, Message Rate, ID Entropy)...")
-    X0, y0 = build_dos_feature_matrix(df_0, window_size=window_size)
-    X1, y1 = build_dos_feature_matrix(df_1, window_size=window_size)
-
-    # 3. Train/Test Split 
-    X0_train, X0_test, y0_train, y0_test = train_test_split(
-        X0, y0, test_size=0.2, random_state=42, stratify=y0
-    )
-
-    X1_train, X1_test, y1_train, y1_test = train_test_split(
-        X1, y1, test_size=0.2, random_state=42, stratify=y1
-    )
-
-    # Note: Decision Tree does not require Standard Scaling.
-    # Omitting the Scaler minimizes float math on the MCU.
-
-    # 4. Model Training: Decision Tree priority for DoS
-    logger.info("Training Decision Tree (Top Priority for DoS)...")
-    # Limit max_depth to 5 to avoid overfitting and reduce the number of if-else statements.
-    dt_model = train_decision_tree(X0_train, y0_train, max_depth=5)
-
-    # Evaluate 
-    y_pred = dt_model.predict(X1_test)
-    print(f"\n{'=' * 60}")
-    print("  DoS Decision Tree Performance")
-    print("=" * 60)
-    print(classification_report(y0_test, y_pred, target_names=["Normal", "DoS"], digits=4))
-
-    # Save model
     dos_output_dir = output_dir / "dos_only"
     dos_output_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(dt_model, dos_output_dir / "dos_dt_model.joblib")
 
-    # 5. Model Compression & Export 
-    logger.info("Exporting Decision Tree to Bare-metal C (Zero-Dependency)...")
+    # =========================================================
+    # PATH A: DECISION TREE (8 FEATURES)
+    # =========================================================
+    logger.info("\n--- [Path A] DECISION TREE (8 Features) ---")
+    logger.info("Extracting 8 features...")
+    X8, y8 = build_dos_feature_matrix(df, window_size=window_size)
+    X8_train, X8_test, y8_train, y8_test = train_test_split(X8, y8, test_size=0.2, random_state=42, stratify=y8)
+
+    logger.info("Training Decision Tree...")
+    dt_model = train_decision_tree(X8_train, y8_train, max_depth=5)
     
-    # Check model size (Memory Footprint)
-    edt = export_decision_tree_structure(dt_model)
-    logger.info("Pruned DT Footprint: %d bytes", edt.memory_footprint_bytes())
+    y8_pred = dt_model.predict(X8_test)
+    dt_acc = accuracy_score(y8_test, y8_pred)
+    dt_f1 = f1_score(y8_test, y8_pred, average='weighted')
+    
+    print(f"\n{'=' * 50}\n  DoS Decision Tree Performance\n{'=' * 50}")
+    print(classification_report(y8_test, y8_pred, target_names=["Normal", "DoS"], digits=4))
 
-    # Generate C code (Header .h và Source .c)
-    header, source = export_model_to_c(
-        dt_model, "dt", dos_output_dir, model_name="dos_ids"
-    )
-    logger.info("  -> Header: %s", header.name)
-    logger.info("  -> Source: %s", source.name)
-    logger.info("DoS Pipeline complete. Artifacts in: %s", dos_output_dir.resolve())
+    # Export DT
+    edt = export_decision_tree_structure(dt_model)
+    dt_size = edt.memory_footprint_bytes()
+    logger.info("Pruned DT Footprint: %d bytes", dt_size)
+    n_features_dt = X8_train.shape[1]
+    header_dt, source_dt = export_dos_model_to_c(dt_model, "dt", dos_output_dir, model_name="dos_ids", window_size = window_size, n_features = n_features_dt)
+
+
+    # =========================================================
+    # PATH B: TINY NEURAL NETWORK (12 FEATURES)
+    # =========================================================
+    logger.info("\n--- [Path B] TINY NEURAL NETWORK (12 Features) ---")
+    logger.info("Extracting 12 extended features...")
+    X12, y12 = build_dos_tnn_feature_matrix(df, window_size=window_size)
+    X12_train, X12_test, y12_train, y12_test = train_test_split(X12, y12, test_size=0.2, random_state=42, stratify=y12)
+
+    logger.info("Scaling features for TNN...")
+    scaler = StandardScaler()
+    X12_train_s = scaler.fit_transform(X12_train)
+    X12_test_s = scaler.transform(X12_test)
+
+    logger.info("Training Tiny Neural Network...")
+    tnn_model = TinyNeuralNetwork(input_dim=12, num_classes=2)
+    tnn_model.fit(X12_train_s, y12_train, epochs=args.epochs if args.epochs else 20, verbose=0, balance_classes=True)
+    
+    y12_pred = tnn_model.predict(X12_test_s)
+    tnn_acc = accuracy_score(y12_test, y12_pred)
+    tnn_f1 = f1_score(y12_test, y12_pred, average='weighted')
+
+    print(f"\n{'=' * 50}\n  DoS Tiny Neural Network Performance\n{'=' * 50}")
+    print(classification_report(y12_test, y12_pred, target_names=["Normal", "DoS"], digits=4))
+
+    # Export TNN ra TFLite & C Code
+    logger.info("Exporting TNN to TFLite and C Code...")
+    
+    tflite_filename = "N/A"
+    if getattr(args, "no_tflite", False) is False:
+        tflite_bytes = export_to_tflite(tnn_model, X12_train_s[:200], quantize=True)
+        tflite_path = save_tflite_model(tflite_bytes, dos_output_dir / "dos_ids_tnn")
+        tflite_filename = tflite_path.name
+        
+    n_features_tnn = X12_train_s.shape[1]
+    header_tnn, source_tnn = export_dos_model_to_c(tnn_model, "tnn", dos_output_dir, model_name="dos_ids", window_size = window_size, n_features = n_features_tnn, scaler=scaler)
+
+    # =========================================================
+    # 3. EXPORT COMMON METADATA FOR BOTH MODELS
+    # =========================================================
+    logger.info("\nGenerating Combined Metadata JSON...")
+    
+    metadata = {
+        "project": "tiny-can-ids-dos-hybrid",
+        "version": "3.0",
+        "task": "Binary Classification (Normal vs DoS)",
+        "models": {
+            "decision_tree": {
+                "model_name": "dos_ids_dt",
+                "model_type": "Decision Tree (Pruned)",
+                "validation_result": {
+                    "accuracy (> 80%)": round(dt_acc, 4),
+                    "f1_score_weighted (> 80%)": round(dt_f1, 4),
+                },
+                "parameters": {
+                    "window_size_samples": window_size,
+                    "window_size_ms": window_size * 1, 
+                    "max_depth": 5,
+                    "tree_nodes": int(dt_model.tree_.node_count),
+                    "memory_footprint_bytes": int(dt_size)
+                },
+                "feature_names": [
+                    "mean_inter_arrival_time",
+                    "std_inter_arrival_time",
+                    "message_rate",
+                    "dominant_id_frequency",
+                    "id_entropy",
+                    "min_inter_arrival_time",
+                    "high_priority_id_rate",
+                    "max_consecutive_identical_ids"
+                ],
+                "api_spec": {
+                    "extraction_function": "void dos_ids_dt_feature_extract(const CAN_Frame_t *window, float *out_features);",
+                    "inference_function": "int dos_ids_dt_predict(const float *input, int n_input);",
+                    "output": "0: Normal, 1: DoS Attack",
+                    "artifacts_generated": [header_dt.name, source_dt.name]
+                }
+            },
+            "tiny_neural_network": {
+                "model_name": "dos_ids_tnn",
+                "model_type": "Tiny Neural Network (INT8 Quantized)",
+                "validation_result": {
+                    "accuracy (> 80%)": round(tnn_acc, 4),
+                    "f1_score_weighted (> 80%)": round(tnn_f1, 4),
+                },
+                "parameters": {
+                    "window_size_samples": window_size,
+                    "window_size_ms": window_size * 1,
+                    "epochs": args.epochs if args.epochs else 20,
+                    "requires_scaling": True,
+                    "scaler_file": "dos_tnn_scaler.joblib"
+                },
+                "feature_names": [
+                    "mean_inter_arrival_time",
+                    "std_inter_arrival_time",
+                    "min_inter_arrival_time",
+                    "max_inter_arrival_time",
+                    "message_rate",
+                    "dominant_id_frequency",
+                    "id_entropy",
+                    "high_priority_id_rate",
+                    "mean_hamming_weight",
+                    "data_change_rate",
+                    "id_gaps",
+                    "skewness_inter_arrival_time"
+                ],
+                "api_spec": {
+                    "extraction_function": "void dos_ids_tnn_feature_extract(const CAN_Frame_t *window, float *out_features);",
+                    "inference_function": "int dos_ids_tnn_predict(const float *input, int n_input);",
+                    "output": "0: Normal, 1: DoS Attack",
+                    "artifacts_generated": [header_tnn.name, source_tnn.name, tflite_filename]
+                }
+            }
+        }
+    }
+
+    metadata_path = dos_output_dir / "dos_ids_metadata.json"
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4)
+    
+    logger.info("  -> Generated: %s", metadata_path.name)
+    logger.info("\n=== Integrated DoS Pipeline Complete. Artifacts in: %s ===", dos_output_dir.resolve())
 
 
 def main() -> None:

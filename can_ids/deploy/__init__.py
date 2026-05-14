@@ -8,6 +8,7 @@ from .c_export import (
     export_dt_to_c_header,
     generate_dt_inference_c_code,
     export_model_to_c,
+    export_dos_model_to_c,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "export_dt_to_c_header",
     "generate_dt_inference_c_code",
     "export_model_to_c",
+    "export_dos_model_to_c",
 ]
