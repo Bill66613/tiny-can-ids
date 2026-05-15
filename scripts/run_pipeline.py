@@ -408,7 +408,7 @@ def run_dos_specific_pipeline(args, output_dir: Path):
     # 1. LOAD DATA & GENERAL PREPROCESSING
     # =========================================================
     if not args.dataset:
-        logger.error("Vui lòng cung cấp đường dẫn --dataset tới file DoS_dataset.csv")
+        logger.error("Please provide the --dataset path to the DoS_dataset.csv file.")
         return
     
     logger.info("Loading DoS dataset from %s", args.dataset)
@@ -487,7 +487,7 @@ def run_dos_specific_pipeline(args, output_dir: Path):
     logger.info("\nGenerating Combined Metadata JSON...")
     
     metadata = {
-        "project": "tiny-can-ids-dos-hybrid",
+        "project": "tiny-can-ids-dos-only",
         "version": "3.0",
         "task": "Binary Classification (Normal vs DoS)",
         "models": {
@@ -516,9 +516,8 @@ def run_dos_specific_pipeline(args, output_dir: Path):
                     "max_consecutive_identical_ids"
                 ],
                 "api_spec": {
-                    "extraction_function": "void dos_ids_dt_feature_extract(const CAN_Frame_t *window, float *out_features);",
-                    "inference_function": "int dos_ids_dt_predict(const float *input, int n_input);",
-                    "output": "0: Normal, 1: DoS Attack",
+                    "public_api": "void dos_ids_dt_process_window(const CAN_Frame_t *window, int *result);",
+                    "output_mapping": "*result = 0 (Normal) | 1 (DoS Attack)",
                     "artifacts_generated": [header_dt.name, source_dt.name]
                 }
             },
@@ -534,7 +533,7 @@ def run_dos_specific_pipeline(args, output_dir: Path):
                     "window_size_ms": window_size * 1,
                     "epochs": args.epochs if args.epochs else 20,
                     "requires_scaling": True,
-                    "scaler_file": "dos_tnn_scaler.joblib"
+                    "scaler_file": "dos_ids_tnn_scaler.h"
                 },
                 "feature_names": [
                     "mean_inter_arrival_time",
@@ -551,9 +550,8 @@ def run_dos_specific_pipeline(args, output_dir: Path):
                     "skewness_inter_arrival_time"
                 ],
                 "api_spec": {
-                    "extraction_function": "void dos_ids_tnn_feature_extract(const CAN_Frame_t *window, float *out_features);",
-                    "inference_function": "int dos_ids_tnn_predict(const float *input, int n_input);",
-                    "output": "0: Normal, 1: DoS Attack",
+                    "public_api": "void dos_ids_tnn_process_window(const CAN_Frame_t *window, int *result);",
+                    "output_mapping": "*result = 0 (Normal) | 1 (DoS Attack)",
                     "artifacts_generated": [header_tnn.name, source_tnn.name, tflite_filename]
                 }
             }
