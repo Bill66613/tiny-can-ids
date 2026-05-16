@@ -20,7 +20,7 @@
 #include <unistd.h>
 #endif
 
-#define APP_VERSION "0.5.0"
+#define APP_VERSION "0.5.1"
 
 #ifndef CAN_FRAME_T_DEFINED
 #define CAN_FRAME_T_DEFINED
@@ -594,7 +594,7 @@ int main(int argc, char **argv)
 	}
 
 #ifdef __linux__
-	printf("  frames      : %d\n", cfg.frame_count);
+	printf("  frames     : %d\n", cfg.frame_count);
 
 	signal(SIGINT, handle_stop_signal);
 	signal(SIGTERM, handle_stop_signal);
