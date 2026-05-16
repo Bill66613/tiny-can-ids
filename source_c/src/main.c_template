@@ -22,6 +22,17 @@
 
 #define APP_VERSION "0.4.0"
 
+#ifndef CAN_FRAME_T_DEFINED
+#define CAN_FRAME_T_DEFINED
+typedef struct
+{
+	double timestamp;
+	uint32_t id;
+	uint8_t dlc;
+	uint8_t data[8];
+} CAN_Frame_t;
+#endif
+
 typedef enum
 {
 	ATTACK_DOS,
