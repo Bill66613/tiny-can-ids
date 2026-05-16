@@ -30,7 +30,7 @@ _WINDOW_SIZE_RE = re.compile(
     r"#define\s+([A-Z][A-Z0-9]*_IDS_[A-Z][A-Z0-9]*_WINDOW_SIZE)\s+\d+"
 )
 _PROCESS_WINDOW_RE = re.compile(
-    r"int\s+([a-z][a-z0-9]*_ids_[a-z][a-z0-9]*_process_window)\s*\("
+    r"void\s+([a-z][a-z0-9]*_ids_[a-z][a-z0-9]*_process_window)\s*\("
 )
 
 
