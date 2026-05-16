@@ -85,7 +85,7 @@ typedef struct
 } handler_entry_t;
 
 static const handler_entry_t g_handler_table[] = {
-	// ##TAG_2
+// ##TAG_2
 };
 
 static const int g_handler_table_size =
