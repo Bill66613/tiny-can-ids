@@ -209,3 +209,4 @@ __marimo__/
 # User-specific files
 output/
 pipeline.toml
+source_c/src/main.c

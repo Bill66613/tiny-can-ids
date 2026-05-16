@@ -9,6 +9,11 @@
 #define DOS_IDS_DT_N_FEATURES 12
 #define DOS_IDS_DT_SAMPLING_RATE_MS 1
 
+/* --- Model Structure --- */
+#define DOS_IDS_DT_N_NODES 37
+#define DOS_IDS_DT_N_CLASSES 2
+#define DOS_IDS_DT_MAX_DEPTH 5
+
 /* --- Data Structures --- */
 #ifndef CAN_FRAME_T_DEFINED
 #define CAN_FRAME_T_DEFINED
@@ -21,19 +26,12 @@ typedef struct {
 #endif
 
 /* --- Public APIs --- */
-void dos_ids_dt_feature_extract(const CAN_Frame_t *window, float *out_features);
-int dos_ids_dt_predict(const float *input, int n_input);
-int dos_ids_dt_process_window(const CAN_Frame_t *window);
-
-/* --- Model Structure --- */
-#define DOS_IDS_DT_N_NODES 37
-#define DOS_IDS_DT_N_CLASSES 2
-#define DOS_IDS_DT_MAX_DEPTH 5
+void dos_ids_dt_process_window(const CAN_Frame_t *window, int *result);
 
 /* Feature index to split on (-1 = leaf) */
 static const int8_t dos_ids_dt_feature_index[37] = {
     6, 5, 5, 5, -1, 1, -1, -1, 4, -1, 5, -1, -1, 4, 3, 2, -1, -1, 4, -1, -1,
-    6, 4, -1, -1, 4, -1, -1, 6, 3, -1, 1, -1, 2, -1, -1, -1
+    6, 4, -1, -1, 4, -1, -1, 6, 3, -1, 1, -1, 0, -1, -1, -1
 };
 
 /* Split threshold per node */
@@ -44,7 +42,7 @@ static const float dos_ids_dt_threshold[37] = {
     1491.97729492f, -2.00000000f, -2.00000000f, 4.25491762f,
     -2.00000000f, -2.00000000f, 0.07000000f, 4.35062313f, -2.00000000f,
     -2.00000000f, 4.38836765f, -2.00000000f, -2.00000000f, 0.17000000f,
-    0.09000000f, -2.00000000f, 0.00139827f, -2.00000000f, 859.23944092f,
+    0.09000000f, -2.00000000f, 0.00139827f, -2.00000000f, 0.00118786f,
     -2.00000000f, -2.00000000f, -2.00000000f
 };
 
@@ -65,7 +63,7 @@ static const int8_t dos_ids_dt_children_right[37] = {
 /* Predicted class at leaf (-1 = internal node) */
 static const int8_t dos_ids_dt_leaf_class[37] = {
     -1, -1, -1, -1, 1, -1, 1, 1, -1, 0, -1, 1, 1, -1, -1, -1, 0, 0, -1, 0,
-    0, -1, -1, 0, 1, -1, 0, 1, -1, -1, 1, -1, 1, -1, 1, 0, 1
+    0, -1, -1, 0, 1, -1, 0, 1, -1, -1, 1, -1, 1, -1, 0, 1, 1
 };
 
 #endif /* DOS_IDS_DT_WEIGHTS_H */

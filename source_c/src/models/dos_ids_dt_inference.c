@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <math.h>
 
-void dos_ids_dt_feature_extract(const CAN_Frame_t *window, float *out_features) {
+static void dos_ids_dt_feature_extract(const CAN_Frame_t *window, float *out_features) {
     double sum_dt = 0, sum_sq_dt = 0;
     float min_dt = 1e9f;
     int id_counts[2048] = {0};
@@ -53,7 +53,7 @@ void dos_ids_dt_feature_extract(const CAN_Frame_t *window, float *out_features) 
 }
 
 /* --- Predict API --- */
-int dos_ids_dt_predict(const float *input, int n_input) {
+static void dos_ids_dt_predict(const float *input, int n_input, int *result) {
     int node = 0;
     while (dos_ids_dt_children_left[node] != -1) {
         if (input[dos_ids_dt_feature_index[node]] <= dos_ids_dt_threshold[node])
@@ -61,14 +61,14 @@ int dos_ids_dt_predict(const float *input, int n_input) {
         else
             node = dos_ids_dt_children_right[node];
     }
-    return dos_ids_dt_leaf_class[node];
+    *result = dos_ids_dt_leaf_class[node];
 }
 
 /* ========================================================
  * HIGH-LEVEL API (All-in-one)
  * ======================================================== */
-int dos_ids_dt_process_window(const CAN_Frame_t *window) {
+void dos_ids_dt_process_window(const CAN_Frame_t *window, int *result) {
     float features_buffer[DOS_IDS_DT_N_FEATURES];
     dos_ids_dt_feature_extract(window, features_buffer);
-    return dos_ids_dt_predict(features_buffer, DOS_IDS_DT_N_FEATURES);
+    dos_ids_dt_predict(features_buffer, DOS_IDS_DT_N_FEATURES, result);
 }
