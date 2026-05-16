@@ -3,6 +3,12 @@ name: Build C source
 on:
   push:
     branches: [nam]
+  workflow_call:
+    outputs:
+      SRC_DIR:
+        description: "Path to the source_c directory"
+        value: ${{ jobs.build-source-c.outputs.SRC_DIR }}
+  workflow_dispatch:
 
 env:
   SRC_DIR: source_c
@@ -83,66 +89,3 @@ jobs:
           if-no-files-found: error
           compression-level: 6
           overwrite: true
-
-  can-attack-sim:
-    runs-on: ubuntu-latest
-    needs: build-source-c
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Download build artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: can-ids-binaries
-          path: ${{ needs.build-source-c.outputs.SRC_DIR }}
-
-      - name: Make binary executable
-        run: chmod +x ${{ needs.build-source-c.outputs.SRC_DIR }}/build/native/can_test_app
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install python-can
-
-      - name: Set up virtual CAN interface
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y linux-modules-extra-$(uname -r)
-          sudo modprobe vcan
-          sudo ip link add dev vcan0 type vcan
-          sudo ip link set up vcan0
-          ip link show vcan0
-
-      - name: Install can-utils
-        run: sudo apt-get install -y can-utils
-
-      - name: Run binary smoke test on vcan0
-        run: |
-          BIN=${{ needs.build-source-c.outputs.SRC_DIR }}/build/native/can_test_app
-
-          echo "========================================"
-          echo " Smoke test: native binary on vcan0"
-          echo "========================================"
-          echo "Binary: $BIN"
-          echo ""
-
-          echo "[1/2] Help output"
-          echo "$BIN --help"
-          "$BIN" --help
-
-          echo ""
-          echo "[2/2] Runtime check (dos/dt, timeout=5s)"
-          echo "$BIN --attack-type dos --model dt --interface vcan0 --timeout 5"
-          "$BIN" --attack-type dos --model dt --interface vcan0 --timeout 5
-
-      - name: Tear down virtual CAN
-        if: always()
-        run: |
-          sudo ip link set down vcan0 || true
-          sudo ip link delete vcan0 || true

@@ -20,7 +20,7 @@
 #include <unistd.h>
 #endif
 
-#define APP_VERSION "0.4.0"
+#define APP_VERSION "0.5.0"
 
 #ifndef CAN_FRAME_T_DEFINED
 #define CAN_FRAME_T_DEFINED
@@ -199,7 +199,8 @@ static int dispatch_process_window(
 
 		int pred = -1;
 		entry->fn(ordered_window, &pred);
-		if (pred == 0)
+		printf("[PRED] %s prediction=%d\n", entry->label, pred);
+		if (pred == 1)
 		{
 			printf("[ALERT] %s attack_detected prediction=%d\n", entry->label, pred);
 		}
@@ -591,7 +592,6 @@ int main(int argc, char **argv)
 	{
 		printf("  timeout    : none (run forever)\n");
 	}
-	printf("\n");
 
 #ifdef __linux__
 	printf("  frames      : %d\n", cfg.frame_count);
