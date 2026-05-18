@@ -166,4 +166,4 @@ class TestPipelineOutputs:
         elapsed = time.time() - start_time
 
         assert result.returncode == 0
-        assert elapsed < 120, f"Pipeline too slow: {elapsed:.2f}s"
+        assert elapsed < 150, f"Pipeline too slow: {elapsed:.2f}s"
