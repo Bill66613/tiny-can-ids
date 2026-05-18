@@ -32,7 +32,8 @@ jobs:
       - name: Run DoS Pipeline
         run: |
           echo "Running pipeline to generate models..."
-          python -m  scripts.run_pipeline --mode dos_only --dataset dataset/DoS_dataset.csv --window-size 50
+          python -m scripts.run_pipeline --dataset dataset/DoS_dataset.csv --export-model dt --window-size 50
+          python -m scripts.run_pipeline --dataset dataset/DoS_dataset.csv --export-model tnn --window-size 50
 
       - name: Upload Generated C Models
         uses: actions/upload-artifact@v4

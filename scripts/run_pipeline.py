@@ -37,6 +37,7 @@ import logging
 import sys
 import joblib
 import os
+import json
 
 import pandas as pd
 from pathlib import Path
@@ -81,7 +82,7 @@ _DEFAULTS: dict = {
     "output_dir": "output",
     "window_size": 50,
     "epochs": 20,
-    "no_tflite": False,
+    "tflite": False,
     "export_model": "tnn",
     "mode": "standard",
 }
@@ -93,9 +94,8 @@ _TOML_KEY_MAP: dict[str, str] = {
     "output-dir": "output_dir",
     "window-size": "window_size",
     "export-model": "export_model",
-    "no-tflite": "no_tflite",
+    "tflite": "tflite",
 }
-
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -142,11 +142,9 @@ def _parse_args() -> argparse.Namespace:
         help="Training epochs for the Tiny Neural Network (default: 20).",
     )
     parser.add_argument(
-        "--no-tflite",
-        action="store_const",
-        const=True,
-        default=None,
-        help="Skip TFLite export (useful when TensorFlow is not installed).",
+        "--tflite",
+        action="store_true",
+        help="Export to TFLite (forces Tiny Neural Network training).",
     )
     parser.add_argument(
         "--export-model",
@@ -155,12 +153,6 @@ def _parse_args() -> argparse.Namespace:
         help="Which model(s) to export to C code. "
         "'all' exports all three, 'best' picks the highest-F1 model "
         "(default: tnn).",
-    )
-    parser.add_argument(
-        "--mode",
-        default="standard",
-        choices=["standard", "dos_only"],
-        help="Choose the execution path: 'standard' for a comprehensive pipeline, 'dos_only' for specific DoS optimization."
     )
     cli_args = parser.parse_args()
 
@@ -229,9 +221,9 @@ def load_data(args):
 # ------------------------------------------------------------------
 # 2. Pre-process & # 3. Feature engineering
 # ------------------------------------------------------------------
-def preprocess_features(raw_df, window_size):
+def preprocess_features(args, raw_df, window_size):
     from can_ids.data import preprocess_can_data
-    from can_ids.features import build_feature_matrix
+    from can_ids.features import build_feature_matrix, build_dos_feature_matrix, build_dos_tnn_feature_matrix
 
     df = preprocess_can_data(raw_df)
     logger.info(
@@ -240,8 +232,16 @@ def preprocess_features(raw_df, window_size):
         100 * df["label"].mean(),
     )
 
-    X, y = build_feature_matrix(df, window_size=window_size)
-    logger.info("Feature matrix: %s  labels: %s", X.shape, np.bincount(y))
+    if args.dataset == "dataset/DoS_dataset.csv": 
+        if args.export_model == "dt":
+            X, y = build_dos_feature_matrix(df, window_size= window_size)
+        elif args.export_model == "tnn":
+            X, y = build_dos_tnn_feature_matrix(df, window_size= window_size)
+
+    else:
+        X, y = build_feature_matrix(df, window_size=window_size)
+        logger.info("Feature matrix: %s  labels: %s", X.shape, np.bincount(y))
+   
     return X, y
 
 
@@ -270,7 +270,7 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler, output
 
     train_all = args.export_model in ("all", "best")
     # TFLite needs TNN even if export target is different
-    need_tnn = train_all or args.export_model == "tnn" or not args.no_tflite
+    need_tnn = train_all or args.export_model == "tnn" or args.tflite
     need_lr = train_all or args.export_model == "lr"
     need_dt = train_all or args.export_model == "dt"
 
@@ -347,7 +347,7 @@ def quantization(models):
 # 8. TFLite export
 # ------------------------------------------------------------------
 def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output_dir):
-    if not args.no_tflite and "tnn" in models:
+    if not args.tflite and "tnn" in models:
         try:
             from can_ids.models import export_to_tflite, save_tflite_model
             from can_ids.models.export import run_tflite_inference
@@ -366,219 +366,48 @@ def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output
         except (ImportError, RuntimeError, OSError) as exc:
             logger.warning("TFLite export/validation failed: %s", exc)
     else:
-        logger.info("TFLite export skipped (--no-tflite)")
+        logger.info("TFLite export skipped (missing --tflite flag)")
 
 
 # ------------------------------------------------------------------
 # 9. C/C++ export
 # ------------------------------------------------------------------
 def c_export(args, models, y_test, output_dir):
-    from can_ids.deploy import export_model_to_c
+    from can_ids.deploy import export_model_to_c, export_dos_model_to_c
 
     export_targets = _resolve_export_targets(args.export_model, models, y_test)
 
     logger.info("Exporting C code for: %s", ", ".join(export_targets))
     for model_type in export_targets:
         name, model_obj, _ = models[model_type]
-        header, source = export_model_to_c(
-            model_obj, model_type, output_dir, model_name="tiny_ids"
-        )
+
+        if args.dataset == "dataset/DoS_dataset.csv":
+            header, source = export_dos_model_to_c(
+                model_obj, 
+                model_type, 
+                output_dir, 
+                model_name="dos_ids",
+                window_size=args.window_size,
+                n_features=model_obj.input_dim if hasattr(model_obj, 'input_dim') else 8
+            )
+        else:
+            header, source = export_model_to_c(
+                model_obj, model_type, output_dir, model_name="tiny_ids"
+            )
         logger.info("  %s → %s, %s", name, header.name, source.name)
-
-def run_dos_specific_pipeline(args, output_dir: Path):
-    """
-    End-to-end pipeline specifically optimized for DoS Attack Detection.
-    Uses Decision Tree as the priority model.
-    """
-    import json
-    from can_ids.features import build_dos_feature_matrix, build_dos_tnn_feature_matrix
-    from can_ids.data.loader import load_can_dataset
-    from can_ids.data import preprocess_can_data
-    from can_ids.models import train_decision_tree, TinyNeuralNetwork
-    from can_ids.models.compress import export_decision_tree_structure
-    from can_ids.deploy import export_dos_model_to_c
-    from can_ids.models.export import export_to_tflite, save_tflite_model
-    from sklearn.model_selection import train_test_split
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.metrics import classification_report, accuracy_score, f1_score
-
-    logger.info("=== Starting Integrated DoS Pipeline (DT 8-feat + TNN 12-feat) ===")
-
-    # =========================================================
-    # 1. LOAD DATA & GENERAL PREPROCESSING
-    # =========================================================
-    if not args.dataset:
-        logger.error("Please provide the --dataset path to the DoS_dataset.csv file.")
-        return
-    
-    logger.info("Loading DoS dataset from %s", args.dataset)
-    raw_df = load_can_dataset(args.dataset)
-    df = preprocess_can_data(raw_df)
-    
-    window_size = args.window_size if args.window_size else 50
-    dos_output_dir = output_dir / "dos_only"
-    dos_output_dir.mkdir(parents=True, exist_ok=True)
-
-    # =========================================================
-    # PATH A: DECISION TREE (8 FEATURES)
-    # =========================================================
-    logger.info("\n--- [Path A] DECISION TREE (8 Features) ---")
-    logger.info("Extracting 8 features...")
-    X8, y8 = build_dos_feature_matrix(df, window_size=window_size)
-    X8_train, X8_test, y8_train, y8_test = train_test_split(X8, y8, test_size=0.2, random_state=42, stratify=y8)
-
-    logger.info("Training Decision Tree...")
-    dt_model = train_decision_tree(X8_train, y8_train, max_depth=5)
-    
-    y8_pred = dt_model.predict(X8_test)
-    dt_acc = accuracy_score(y8_test, y8_pred)
-    dt_f1 = f1_score(y8_test, y8_pred, average='weighted')
-    
-    print(f"\n{'=' * 50}\n  DoS Decision Tree Performance\n{'=' * 50}")
-    print(classification_report(y8_test, y8_pred, target_names=["Normal", "DoS"], digits=4))
-
-    # Export DT
-    edt = export_decision_tree_structure(dt_model)
-    dt_size = edt.memory_footprint_bytes()
-    logger.info("Pruned DT Footprint: %d bytes", dt_size)
-    n_features_dt = X8_train.shape[1]
-    header_dt, source_dt = export_dos_model_to_c(dt_model, "dt", dos_output_dir, model_name="dos_ids", window_size = window_size, n_features = n_features_dt)
-
-
-    # =========================================================
-    # PATH B: TINY NEURAL NETWORK (12 FEATURES)
-    # =========================================================
-    logger.info("\n--- [Path B] TINY NEURAL NETWORK (12 Features) ---")
-    logger.info("Extracting 12 extended features...")
-    X12, y12 = build_dos_tnn_feature_matrix(df, window_size=window_size)
-    X12_train, X12_test, y12_train, y12_test = train_test_split(X12, y12, test_size=0.2, random_state=42, stratify=y12)
-
-    logger.info("Scaling features for TNN...")
-    scaler = StandardScaler()
-    X12_train_s = scaler.fit_transform(X12_train)
-    X12_test_s = scaler.transform(X12_test)
-
-    logger.info("Training Tiny Neural Network...")
-    tnn_model = TinyNeuralNetwork(input_dim=12, num_classes=2)
-    tnn_model.fit(X12_train_s, y12_train, epochs=args.epochs if args.epochs else 20, verbose=0, balance_classes=True)
-    
-    y12_pred = tnn_model.predict(X12_test_s)
-    tnn_acc = accuracy_score(y12_test, y12_pred)
-    tnn_f1 = f1_score(y12_test, y12_pred, average='weighted')
-
-    print(f"\n{'=' * 50}\n  DoS Tiny Neural Network Performance\n{'=' * 50}")
-    print(classification_report(y12_test, y12_pred, target_names=["Normal", "DoS"], digits=4))
-
-    # Export TNN ra TFLite & C Code
-    logger.info("Exporting TNN to TFLite and C Code...")
-    
-    tflite_filename = "N/A"
-    if getattr(args, "no_tflite", False) is False:
-        tflite_bytes = export_to_tflite(tnn_model, X12_train_s[:200], quantize=True)
-        tflite_path = save_tflite_model(tflite_bytes, dos_output_dir / "dos_ids_tnn")
-        tflite_filename = tflite_path.name
-        
-    n_features_tnn = X12_train_s.shape[1]
-    header_tnn, source_tnn = export_dos_model_to_c(tnn_model, "tnn", dos_output_dir, model_name="dos_ids", window_size = window_size, n_features = n_features_tnn, scaler=scaler)
-
-    # =========================================================
-    # 3. EXPORT COMMON METADATA FOR BOTH MODELS
-    # =========================================================
-    logger.info("\nGenerating Combined Metadata JSON...")
-    
-    metadata = {
-        "project": "tiny-can-ids-dos-only",
-        "version": "3.0",
-        "task": "Binary Classification (Normal vs DoS)",
-        "models": {
-            "decision_tree": {
-                "model_name": "dos_ids_dt",
-                "model_type": "Decision Tree (Pruned)",
-                "validation_result": {
-                    "accuracy (> 80%)": round(dt_acc, 4),
-                    "f1_score_weighted (> 80%)": round(dt_f1, 4),
-                },
-                "parameters": {
-                    "window_size_samples": window_size,
-                    "window_size_ms": window_size * 1, 
-                    "max_depth": 5,
-                    "tree_nodes": int(dt_model.tree_.node_count),
-                    "memory_footprint_bytes": int(dt_size)
-                },
-                "feature_names": [
-                    "mean_inter_arrival_time",
-                    "std_inter_arrival_time",
-                    "message_rate",
-                    "dominant_id_frequency",
-                    "id_entropy",
-                    "min_inter_arrival_time",
-                    "high_priority_id_rate",
-                    "max_consecutive_identical_ids"
-                ],
-                "api_spec": {
-                    "public_api": "void dos_ids_dt_process_window(const CAN_Frame_t *window, int *result);",
-                    "output_mapping": "*result = 0 (Normal) | 1 (DoS Attack)",
-                    "artifacts_generated": [header_dt.name, source_dt.name]
-                }
-            },
-            "tiny_neural_network": {
-                "model_name": "dos_ids_tnn",
-                "model_type": "Tiny Neural Network (INT8 Quantized)",
-                "validation_result": {
-                    "accuracy (> 80%)": round(tnn_acc, 4),
-                    "f1_score_weighted (> 80%)": round(tnn_f1, 4),
-                },
-                "parameters": {
-                    "window_size_samples": window_size,
-                    "window_size_ms": window_size * 1,
-                    "epochs": args.epochs if args.epochs else 20,
-                    "requires_scaling": True,
-                    "scaler_file": "dos_ids_tnn_scaler.h"
-                },
-                "feature_names": [
-                    "mean_inter_arrival_time",
-                    "std_inter_arrival_time",
-                    "min_inter_arrival_time",
-                    "max_inter_arrival_time",
-                    "message_rate",
-                    "dominant_id_frequency",
-                    "id_entropy",
-                    "high_priority_id_rate",
-                    "mean_hamming_weight",
-                    "data_change_rate",
-                    "id_gaps",
-                    "skewness_inter_arrival_time"
-                ],
-                "api_spec": {
-                    "public_api": "void dos_ids_tnn_process_window(const CAN_Frame_t *window, int *result);",
-                    "output_mapping": "*result = 0 (Normal) | 1 (DoS Attack)",
-                    "artifacts_generated": [header_tnn.name, source_tnn.name, tflite_filename]
-                }
-            }
-        }
-    }
-
-    metadata_path = dos_output_dir / "dos_ids_metadata.json"
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=4)
-    
-    logger.info("  -> Generated: %s", metadata_path.name)
-    logger.info("\n=== Integrated DoS Pipeline Complete. Artifacts in: %s ===", dos_output_dir.resolve())
-
 
 def main() -> None:
     args = _parse_args()
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- DoS_ONLY PIPELINE ---
-    if getattr(args, "mode", "standard") == "dos_only":
-        run_dos_specific_pipeline(args, output_dir)
-        return
+    is_dos = args.dataset and "DoS_dataset.csv" in args.dataset
+    output_dir = Path(args.output_dir) / "dos_only" if is_dos else Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     # --- STANDARD PIPELINE ---
     raw_df, num_classes, class_names = load_data(args)
-    X, y = preprocess_features(raw_df, args.window_size)
+    X, y = preprocess_features(args, raw_df, args.window_size)
+    
+    n_features = X.shape[1]
     X_train_s, X_test_s, y_train, y_test, scaler = split_scale(X, y)
 
     models = train_models(
@@ -595,6 +424,9 @@ def main() -> None:
     quantization(models)
     tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output_dir)
     c_export(args, models, y_test, output_dir)
+
+    if is_dos:
+        _export_dos_metadata(args, models, y_test, scaler, output_dir, n_features)
 
     logger.info("Pipeline complete. Artifacts in: %s", output_dir.resolve())
 
@@ -673,6 +505,95 @@ def _report(
     print("=" * 60)
     print(classification_report(y_true, y_pred, target_names=class_names, digits=4))
 
+def _export_dos_metadata(args, models, y_test, scaler, output_dir, n_features):
+    from can_ids.models.compress import export_decision_tree_structure
+
+    metadata_path = output_dir / "dos_ids_metadata.json"
+
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except json.JSONDecodeError:
+            metadata = None
+    else:
+        metadata = None
+
+    if metadata is None:
+        metadata = {
+            "project": "tiny-can-ids-dos-only",
+            "version": "3.0",
+            "task": "Binary Classification (Normal vs DoS)",
+            "models": {}
+        }
+
+    if "models" not in metadata:
+        metadata["models"] = {}
+
+    for key, (name, model_obj, y_pred) in models.items():
+        acc = accuracy_score(y_test, y_pred)
+        f1 = f1_score(y_test, y_pred, average="weighted")
+        
+        model_info = {
+            "model_name": f"dos_ids_{key}",
+            "validation_result": {
+                "accuracy (> 80%)": round(acc, 4),
+                "f1_score_weighted (> 80%)": round(f1, 4)
+            },
+            "parameters": {
+                "window_size_samples": args.window_size,
+                "window_size_ms": args.window_size * 1,
+                "number_of_features": n_features,
+            }
+        }
+        
+        if key == "dt":
+            model_info["model_type"] = "Decision Tree (Pruned)"
+            edt = export_decision_tree_structure(model_obj)
+            model_info["parameters"]["max_depth"] = 5
+            model_info["parameters"]["tree_nodes"] = int(model_obj.tree_.node_count)
+            model_info["parameters"]["memory_footprint_bytes"] = int(edt.memory_footprint_bytes())
+            model_info["feature_names"] = [
+                "mean_inter_arrival_time", "std_inter_arrival_time", "message_rate",
+                "dominant_id_frequency", "id_entropy", "min_inter_arrival_time",
+                "high_priority_id_rate", "max_consecutive_identical_ids"
+            ]
+            model_info["api_spec"] = {
+                "public_api": "void dos_ids_dt_process_window(const CAN_Frame_t *window, int *result);",
+                "output_mapping": "*result = 0 (Normal) | 1 (DoS Attack)",
+                "artifacts_generated": ["dos_ids_dt_weights.h", "dos_ids_dt_inference.c"]
+            }
+            
+        elif key == "tnn":
+            model_info["model_type"] = "Tiny Neural Network (INT8 Quantized)"
+            model_info["parameters"]["epochs"] = args.epochs
+            model_info["parameters"]["requires_scaling"] = True
+            model_info["parameters"]["scaler_file"] = "dos_ids_tnn_scaler.h"
+            model_info["feature_names"] = [
+                "mean_inter_arrival_time", "std_inter_arrival_time", "min_inter_arrival_time",
+                "max_inter_arrival_time", "message_rate", "dominant_id_frequency",
+                "id_entropy", "high_priority_id_rate", "mean_hamming_weight",
+                "data_change_rate", "id_gaps", "skewness_inter_arrival_time"
+            ]
+            model_info["api_spec"] = {
+                "public_api": "void dos_ids_tnn_process_window(const CAN_Frame_t *window, int *result);",
+                "output_mapping": "*result = 0 (Normal) | 1 (DoS Attack)",
+                "artifacts_generated": ["dos_ids_tnn_weights.h", "dos_ids_tnn_inference.c", "dos_ids_tnn.tflite"]
+            }
+            
+            scaler_path = output_dir / "dos_ids_tnn_scaler.h"
+            means = ", ".join([f"{m:.8f}f" for m in scaler.mean_])
+            scales = ", ".join([f"{s:.8f}f" for s in scaler.scale_])
+            content = f"/* Auto-generated Scaler Data - Do not edit */\n#ifndef DOS_IDS_TNN_SCALER_H\n#define DOS_IDS_TNN_SCALER_H\n\n" \
+                      f"static const float dos_ids_tnn_scaler_mean[{len(scaler.mean_)}] = {{ {means} }};\n" \
+                      f"static const float dos_ids_tnn_scaler_scale[{len(scaler.scale_)}] = {{ {scales} }};\n\n" \
+                      f"#endif /* DOS_IDS_TNN_SCALER_H */\n"
+            scaler_path.write_text(content)
+
+        metadata["models"][key] = model_info
+
+    with open(output_dir / "dos_ids_metadata.json", "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4)
 
 if __name__ == "__main__":
     main()
