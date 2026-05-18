@@ -232,7 +232,7 @@ def preprocess_features(args, raw_df, window_size):
         100 * df["label"].mean(),
     )
 
-    if args.dataset == "dataset/DoS_dataset.csv": 
+    if args.dataset and "dataset/DoS_dataset.csv" in args.dataset:
         if args.export_model == "dt":
             X, y = build_dos_feature_matrix(df, window_size= window_size)
         elif args.export_model == "tnn":
@@ -347,7 +347,7 @@ def quantization(models):
 # 8. TFLite export
 # ------------------------------------------------------------------
 def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output_dir):
-    if not args.tflite and "tnn" in models:
+    if args.tflite and "tnn" in models:
         try:
             from can_ids.models import export_to_tflite, save_tflite_model
             from can_ids.models.export import run_tflite_inference
@@ -381,7 +381,7 @@ def c_export(args, models, y_test, output_dir):
     for model_type in export_targets:
         name, model_obj, _ = models[model_type]
 
-        if args.dataset == "dataset/DoS_dataset.csv":
+        if args.dataset and "dataset/DoS_dataset.csv" in args.dataset:
             header, source = export_dos_model_to_c(
                 model_obj, 
                 model_type, 
