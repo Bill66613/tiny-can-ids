@@ -255,13 +255,13 @@ def split_scale(X, y):
     scaler = StandardScaler()
     X_train_s = scaler.fit_transform(X_train)
     X_test_s = scaler.transform(X_test)
-    return X_train_s, X_test_s, y_train, y_test, scaler
+    return X_train, X_test, X_train_s, X_test_s, y_train, y_test, scaler
 
 
 # ------------------------------------------------------------------
 # 5. Train models (only what's needed)
 # ------------------------------------------------------------------
-def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler, output_dir):
+def train_models(args, X_train, X_train_s, y_train, X_test, X_test_s, num_classes, scaler, output_dir):
     from can_ids.models import (
         train_logistic_regression,
         train_decision_tree,
@@ -291,8 +291,8 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler, output
 
     if need_dt:
         logger.info("Training Decision Tree …")
-        dt_model = train_decision_tree(X_train_s, y_train, max_depth=5)
-        models["dt"] = ("Decision Tree", dt_model, dt_model.predict(X_test_s))
+        dt_model = train_decision_tree(X_train, y_train, max_depth=5)
+        models["dt"] = ("Decision Tree", dt_model, dt_model.predict(X_test))
 
         # Save Decision Tree model
         dt_checkpoint_path = checkpoint_dir / "tiny_ids_dt_save_model.joblib"
@@ -355,7 +355,10 @@ def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output
             tnn = models["tnn"][1]
             logger.info("Exporting to TFLite (full-integer quantization) …")
             tflite_bytes = export_to_tflite(tnn, X_train_s[:200])
-            tflite_path = save_tflite_model(tflite_bytes, output_dir / "tiny_ids_model")
+            is_dos = args.dataset and "dataset/DoS_dataset.csv" in args.dataset
+            file_prefix = "dos_ids_tnn_model" if is_dos else "tiny_ids_model"
+            
+            tflite_path = save_tflite_model(tflite_bytes, output_dir / file_prefix)
             logger.info("TFLite model saved to %s", tflite_path)
 
             # Validate TFLite inference
@@ -408,12 +411,14 @@ def main() -> None:
     X, y = preprocess_features(args, raw_df, args.window_size)
     
     n_features = X.shape[1]
-    X_train_s, X_test_s, y_train, y_test, scaler = split_scale(X, y)
+    X_train, X_test, X_train_s, X_test_s, y_train, y_test, scaler = split_scale(X, y)
 
     models = train_models(
         args,
+        X_train,
         X_train_s,
         y_train,
+        X_test,
         X_test_s,
         num_classes,
         scaler,
@@ -578,7 +583,7 @@ def _export_dos_metadata(args, models, y_test, scaler, output_dir, n_features):
             model_info["api_spec"] = {
                 "public_api": "void dos_ids_tnn_process_window(const CAN_Frame_t *window, int *result);",
                 "output_mapping": "*result = 0 (Normal) | 1 (DoS Attack)",
-                "artifacts_generated": ["dos_ids_tnn_weights.h", "dos_ids_tnn_inference.c", "dos_ids_tnn.tflite"]
+                "artifacts_generated": ["dos_ids_tnn_weights.h", "dos_ids_tnn_inference.c", "dos_ids_tnn_model.tflite"]
             }
             
             scaler_path = output_dir / "dos_ids_tnn_scaler.h"
