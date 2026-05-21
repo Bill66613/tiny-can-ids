@@ -62,8 +62,8 @@ static const int8_t dos_ids_dt_children_right[39] = {
 
 /* Predicted class at leaf (-1 = internal node) */
 static const int8_t dos_ids_dt_leaf_class[39] = {
-    -1, -1, -1, -1, 1, -1, 1, 1, -1, 0, -1, 1, 1, -1, -1, -1, 0, 0, -1, 0,
-    0, -1, -1, 0, 1, -1, 0, 1, -1, -1, -1, 1, 1, -1, 1, -1, 0, 1, 1
+    -1, -1, -1, -1, 0, -1, 0, 0, -1, 0, -1, 0, 0, -1, -1, -1, 0, 0, -1, 0,
+    0, -1, -1, 0, 0, -1, 0, 0, -1, -1, -1, 0, 0, -1, 0, -1, 0, 0, 1
 };
 
 #endif /* DOS_IDS_DT_WEIGHTS_H */
