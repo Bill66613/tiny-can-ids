@@ -733,7 +733,7 @@ def generate_dos_tnn_inference_c_code(
         f"    for (int i = 0; i < {model_name.upper()}_WINDOW_SIZE; ++i) {{",
         "        /* 1. Timing & Payload Change Stats */",
         "        if (i > 0) {",
-        "            float dt = (float)(window[i].timestamp - window[i-1].timestamp) / 1000000.0f;",
+        "            float dt = (float)(window[i].timestamp - window[i-1].timestamp);",
         "            sum_dt += dt;",
         "            sum_sq_dt += (double)dt * dt;",
         "            sum_cube_dt += (double)dt * dt * dt;",
@@ -873,7 +873,7 @@ def generate_dos_tnn_inference_c_code(
     last_layer = quantizer.quantized_layers[-1]
     n_outputs = last_layer.kernel_q.shape[1]
     if n_outputs == 1:
-        code_parts.append(f"    *result = {prev_buf}[0] >= 0.5f ? 1 : 0;")
+        code_parts.append(f"    *result = {prev_buf}[0] >= 0.75f ? 1 : 0;")
     else:
         # Multi-class classification: argmax
         code_parts.append(f"    int best_class = 0;")
@@ -916,7 +916,7 @@ def export_dos_dt_to_c_header(
     path: str | Path,
     model_name: str = "tiny_ids_dt",
     window_size: int = 50,
-    n_features: int = 12,
+    n_features: int = 8,
 ) -> Path:
     """Write decision tree structure as a C header file.
 
@@ -1059,7 +1059,7 @@ def generate_dos_dt_inference_c_code(
         "",
         f"    for (int i = 0; i < {model_name.upper()}_WINDOW_SIZE; ++i) {{",
         "        if (i > 0) {",
-        "            float dt = (float)(window[i].timestamp - window[i-1].timestamp) / 1000000.0f;",
+        "            float dt = (float)(window[i].timestamp - window[i-1].timestamp);",
         "            sum_dt += dt;",
         "            sum_sq_dt += dt * dt;",
         "            if (dt < min_dt) min_dt = dt;",
@@ -1189,7 +1189,7 @@ def export_dos_model_to_c(
     elif model_type == "dt":
         edt = export_decision_tree_structure(model)
         name = f"{model_name}_dt"
-        header = export_dos_dt_to_c_header(edt, output_dir / f"{name}_weights", model_name=name)
+        header = export_dos_dt_to_c_header(edt, output_dir / f"{name}_weights", model_name=name, window_size=window_size, n_features=n_features)
         source = generate_dos_dt_inference_c_code(
             edt, output_dir / f"{name}_inference", model_name=name
         )
