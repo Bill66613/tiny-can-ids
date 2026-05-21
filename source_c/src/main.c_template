@@ -20,7 +20,7 @@
 #include <unistd.h>
 #endif
 
-#define APP_VERSION "0.5.1"
+#define APP_VERSION "0.6.1"
 
 #ifndef CAN_FRAME_T_DEFINED
 #define CAN_FRAME_T_DEFINED
@@ -58,6 +58,7 @@ typedef struct
 	int frame_count;
 	int slide_percent; /* 1..100, percent of frame_count to advance per dispatch */
 	int timeout_sec; /* <= 0 means run forever */
+	bool verbose;
 } app_config_t;
 
 static const char *attack_type_to_string(attack_type_t attack_type);
@@ -211,8 +212,8 @@ static int dispatch_process_window(
 	printf("[WARN] no handler for attack=%s model=%s — using stub.\n",
 		   attack_type_to_string(cfg->attack_type),
 		   model_type_to_string(cfg->model));
-	process_can_window_x(window, start_index, frame_count, cfg);
-	return 0;
+	// process_can_window_x(window, start_index, frame_count, cfg);
+	return -1;
 }
 
 static int listen_for_can_frames(int fd, const app_config_t *cfg)
@@ -307,16 +308,19 @@ static int listen_for_can_frames(int fd, const app_config_t *cfg)
 		memset(sample.data, 0, sizeof(sample.data));
 		memcpy(sample.data, frame.data, (size_t)frame.can_dlc);
 
-		printf("[CAN] id=0x%03X dlc=%d data=", sample.id & CAN_SFF_MASK, sample.dlc);
-		for (int j = 0; j < sample.dlc; j++)
+		if (cfg->verbose)
 		{
-			printf("%02X", sample.data[j]);
-			if (j + 1 < sample.dlc)
+			printf("[CAN] ts=%.0f id=0x%03X dlc=%d data=", sample.timestamp, sample.id & CAN_SFF_MASK, sample.dlc);
+			for (int j = 0; j < sample.dlc; j++)
 			{
-				printf(" ");
+				printf("%02X", sample.data[j]);
+				if (j + 1 < sample.dlc)
+				{
+					printf(" ");
+				}
 			}
+			printf("\n");
 		}
-		printf("\n");
 
 		if (filled < cfg->frame_count)
 		{
@@ -361,7 +365,8 @@ static void print_help(const char *prog_name)
 	printf("  -i, --interface     CAN interface name, example: can0, vcan0\n");
 	printf("  -s, --slide-percent Sliding hop as %% of frame_count, example: 10, 30, 50 (default: 50)\n");
 	printf("  -t, --timeout       Stop after N seconds (<=0 = run forever, default: 0)\n");
-	printf("  -v, --version       Show version\n");
+	printf("  -v, --verbose       Print each CAN message in detail\n");
+	printf("  -V, --version       Show version\n");
 	printf("  -h, --help          Show this help message\n");
 	printf("\n");
 	printf("Example:\n");
@@ -474,13 +479,14 @@ static bool parse_arguments(int argc, char **argv, app_config_t *cfg)
 		{"interface", required_argument, NULL, 'i'},
 		{"slide-percent", required_argument, NULL, 's'},
 		{"timeout", required_argument, NULL, 't'},
-		{"version", no_argument, NULL, 'v'},
+		{"verbose", no_argument, NULL, 'v'},
+		{"version", no_argument, NULL, 'V'},
 		{"help", no_argument, NULL, 'h'},
 		{0, 0, 0, 0},
 	};
 
 	int opt = 0;
-	while ((opt = getopt_long(argc, argv, "a:m:i:s:t:vh", long_options, NULL)) != -1)
+	while ((opt = getopt_long(argc, argv, "a:m:i:s:t:vVh", long_options, NULL)) != -1)
 	{
 		switch (opt)
 		{
@@ -538,6 +544,9 @@ static bool parse_arguments(int argc, char **argv, app_config_t *cfg)
 			break;
 		}
 		case 'v':
+			cfg->verbose = true;
+			break;
+		case 'V':
 			printf("%s\n", APP_VERSION);
 			exit(EXIT_SUCCESS);
 		case 'h':
@@ -568,6 +577,7 @@ int main(int argc, char **argv)
 		.frame_count = 10,
 		.slide_percent = 50,
 		.timeout_sec = 0,
+		.verbose = false,
 	};
 
 	if (!parse_arguments(argc, argv, &cfg))
@@ -584,6 +594,7 @@ int main(int argc, char **argv)
 	printf("  interface  : %s\n", cfg.interface_name);
 	printf("  frame_count: %d\n", cfg.frame_count);
 	printf("  slide_pct  : %d%%\n", cfg.slide_percent);
+	printf("  verbose    : %s\n", cfg.verbose ? "on" : "off");
 	if (cfg.timeout_sec > 0)
 	{
 		printf("  timeout    : %ds\n", cfg.timeout_sec);
