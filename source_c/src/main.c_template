@@ -144,7 +144,7 @@ static double now_timestamp_s(void)
 {
 	struct timespec ts;
 	clock_gettime(CLOCK_REALTIME, &ts);
-	return (double)ts.tv_sec  + ((double)ts.tv_nsec / 1000000000.0)
+	return (double)ts.tv_sec  + ((double)ts.tv_nsec / 1000000000.0);
 }
 
 static void process_can_window_x(
