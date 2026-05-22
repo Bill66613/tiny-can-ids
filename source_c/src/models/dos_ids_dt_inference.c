@@ -12,7 +12,7 @@ static void dos_ids_dt_feature_extract(const CAN_Frame_t *window, float *out_fea
 
     for (int i = 0; i < DOS_IDS_DT_WINDOW_SIZE; ++i) {
         if (i > 0) {
-            float dt = (float)(window[i].timestamp - window[i-1].timestamp) / 1000000.0f;
+            float dt = (float)(window[i].timestamp - window[i-1].timestamp);
             sum_dt += dt;
             sum_sq_dt += dt * dt;
             if (dt < min_dt) min_dt = dt;

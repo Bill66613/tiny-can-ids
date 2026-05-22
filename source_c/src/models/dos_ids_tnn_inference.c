@@ -26,7 +26,7 @@ static void dos_ids_tnn_feature_extract(const CAN_Frame_t *window, float *out_fe
     for (int i = 0; i < DOS_IDS_TNN_WINDOW_SIZE; ++i) {
         /* 1. Timing & Payload Change Stats */
         if (i > 0) {
-            float dt = (float)(window[i].timestamp - window[i-1].timestamp) / 1000000.0f;
+            float dt = (float)(window[i].timestamp - window[i-1].timestamp);
             sum_dt += dt;
             sum_sq_dt += (double)dt * dt;
             sum_cube_dt += (double)dt * dt * dt;
@@ -144,7 +144,7 @@ static void dos_ids_tnn_predict(const float *input, int n_input, int *result) {
         buf2[j] = _sigmoid(acc);
     }
 
-    *result = buf2[0] >= 0.5f ? 1 : 0;
+    *result = buf2[0] >= 0.75f ? 1 : 0;
 }
 
 /* ========================================================
