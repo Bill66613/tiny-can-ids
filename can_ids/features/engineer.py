@@ -64,7 +64,7 @@ def extract_id_frequency_features(
     features = []
 
     for w in range(n_windows):
-        window = df.iloc[w * window_size : (w + 1) * window_size]
+        window = df.iloc[w * window_size: (w + 1) * window_size]
         counts = window["ID"].value_counts()
         total = len(window)
         row = np.zeros(top_k + 2, dtype=np.float32)
@@ -111,7 +111,7 @@ def extract_timing_features(
     features = []
 
     for w in range(n_windows):
-        window = inter_arrival[w * window_size : (w + 1) * window_size]
+        window = inter_arrival[w * window_size: (w + 1) * window_size]
         if len(window) == 0:
             features.append(np.zeros(4, dtype=np.float32))
         else:
@@ -142,21 +142,24 @@ def extract_payload_features(
         2-D array of shape ``(n_windows, 17)``:
         8 per-position means + 8 per-position stds + mean Hamming weight.
     """
-    payload = df[[c for c in _PAYLOAD_COLS if c in df.columns]].to_numpy(dtype=np.uint8)
+    payload = df[[c for c in _PAYLOAD_COLS if c in df.columns]
+                 ].to_numpy(dtype=np.uint8)
     n_cols = payload.shape[1]
     n = len(df)
     n_windows = max(1, n // window_size)
     features = []
 
     for w in range(n_windows):
-        window = payload[w * window_size : (w + 1) * window_size]
+        window = payload[w * window_size: (w + 1) * window_size]
         if len(window) == 0:
             features.append(np.zeros(n_cols * 2 + 1, dtype=np.float32))
             continue
         means = window.mean(axis=0)
         stds = window.std(axis=0)
-        hamming = np.mean(np.unpackbits(window.astype(np.uint8), axis=1).sum(axis=1))
-        features.append(np.concatenate([means, stds, [hamming]]).astype(np.float32))
+        hamming = np.mean(np.unpackbits(
+            window.astype(np.uint8), axis=1).sum(axis=1))
+        features.append(np.concatenate(
+            [means, stds, [hamming]]).astype(np.float32))
 
     return np.array(features, dtype=np.float32)
 
@@ -264,7 +267,7 @@ def build_feature_matrix(
         # Multi-class: take the most common non-zero label in the window
         y = np.zeros(n_windows, dtype=np.int32)
         for w in range(n_windows):
-            window_labels = labels[w * window_size : (w + 1) * window_size]
+            window_labels = labels[w * window_size: (w + 1) * window_size]
             attack_labels = window_labels[window_labels > 0]
             if len(attack_labels) > 0:
                 # Use the most frequent attack class in this window
@@ -273,7 +276,7 @@ def build_feature_matrix(
     else:
         y = np.array(
             [
-                int(labels[w * window_size : (w + 1) * window_size].any())
+                int(labels[w * window_size: (w + 1) * window_size].any())
                 for w in range(n_windows)
             ],
             dtype=np.int32,
@@ -290,16 +293,56 @@ def build_feature_matrix(
 # ------------------------------------------------------------------
 # DoS Feature Extraction
 # ------------------------------------------------------------------
+
+
+def _clean_dos_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean a DoS dataset before feature extraction.
+
+    Removes timestamp outliers (inter-arrival > 1s, likely recording gaps)
+    and ensures strictly monotonic timestamps.
+    """
+    df = df.copy()
+    df.sort_values("Timestamp", inplace=True)
+    df.reset_index(drop=True, inplace=True)
+
+    ts = df["Timestamp"].to_numpy(dtype=np.float64)
+    if len(ts) > 1:
+        dt = np.diff(ts)
+        keep = np.concatenate(([True], dt <= 1.0))
+        n_dropped = (~keep).sum()
+        if n_dropped > 0:
+            logger.info("DoS cleaning: dropped %d frames with inter-arrival > 1s", n_dropped)
+            df = df.loc[keep].reset_index(drop=True)
+
+    dup_mask = df["Timestamp"].diff() <= 0
+    n_dup = dup_mask.sum()
+    if n_dup > 0:
+        logger.info("DoS cleaning: dropped %d non-monotonic timestamps", n_dup)
+        df = df.loc[~dup_mask].reset_index(drop=True)
+
+    return df
+
+
+_DOS_ATTACK_RATIO_THRESHOLD = 0.3
+
+
 def build_dos_feature_matrix(
-    df: pd.DataFrame, 
+    df: pd.DataFrame,
     window_size: int = 50,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Build a lightweight feature matrix for DoS attack detection.
+
+    Extracts 8 features per window:
+      0: Mean Δt              4: ID Entropy
+      1: Std Δt               5: Min Δt
+      2: Message Rate         6: Timing CV (std/mean)
+      3: Dominant ID Freq     7: Unique ID Ratio
+
+    Window label = 1 (attack) only if >= 30% of frames are attack,
+    preventing contamination from scattered single-frame injections.
     """
-    Build a lightweight feature matrix specifically for DoS attack detection.
-    Extracts only 8 critical features per window to save CPU cycles on MCU.
-    
-    Features: [Mean Δt, Std Δt, Message Rate, Dominant ID Freq, ID Entropy]
-    """
+    df = _clean_dos_dataframe(df)
+
     timestamps = df["Timestamp"].to_numpy(dtype=np.float64)
     ids = df["ID"].to_numpy()
     labels = df["label"].to_numpy()
@@ -316,67 +359,55 @@ def build_dos_feature_matrix(
         win_ts = timestamps[start:end]
         win_ids = ids[start:end]
         win_labels = labels[start:end]
-        # Timing: Mean Δt và Std Δt
+
         if len(win_ts) > 1:
             dt = np.diff(win_ts)
-            X[w, 0] = dt.mean()
-            X[w, 1] = dt.std()
-            
-            # Message Rate (Messages / Second)
+            mean_dt = dt.mean()
+            std_dt = dt.std()
+            X[w, 0] = mean_dt
+            X[w, 1] = std_dt
             time_span = win_ts[-1] - win_ts[0]
             X[w, 2] = len(win_ts) / max(time_span, 1e-6)
-            # Min Δt: Highly sensitive to instant DoS signals
             X[w, 5] = dt.min()
-        else:
-            X[w, 0], X[w, 1], X[w, 2], X[w, 5] = 0.0, 0.0, 0.0
+            X[w, 6] = std_dt / max(mean_dt, 1e-12)
 
         if len(win_ids) > 0:
-            # Calculate the probability of the IDs appearing in the window.
-            _, counts = np.unique(win_ids, return_counts=True)
+            unique_ids, counts = np.unique(win_ids, return_counts=True)
             probs = counts / len(win_ids)
-            
-            # Dominant ID Frequency 
             X[w, 3] = probs.max()
-            
-            # Shannon Entropy
             X[w, 4] = float(-np.sum(probs * np.log2(probs + 1e-12)))
+            X[w, 7] = len(unique_ids) / window_size
 
-            # High Priority ID rate (< 0x100 or 256)
-            X[w, 6] = np.sum(win_ids < 256) / len(win_ids)
-            
-            # Longest sequence of identical IDs
-            # Logic: Find the points where the ID changes, calculate the distance between those points
-            changes = np.concatenate(([1], np.diff(win_ids) != 0))
-            run_lengths = np.diff(np.where(np.concatenate((changes, [1])))[0])
-            X[w, 7] = run_lengths.max() if len(run_lengths) > 0 else 0
-        # If there is any attack -> Label 1
-        y[w] = int(win_labels.any())
-        
-    logger.info("DoS Feature matrix optimized: %s (Reduced from 46 to 8 features)", X.shape)
+        attack_ratio = win_labels.sum() / window_size
+        y[w] = int(attack_ratio >= _DOS_ATTACK_RATIO_THRESHOLD)
+
+    logger.info(
+        "DoS DT feature matrix: %s, attack windows: %d / %d (threshold=%.0f%%)",
+        X.shape, y.sum(), n_windows, _DOS_ATTACK_RATIO_THRESHOLD * 100,
+    )
     return X, y
 
+
 def build_dos_tnn_feature_matrix(
-    df: pd.DataFrame, 
+    df: pd.DataFrame,
     window_size: int = 50,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Build an extended 12-feature matrix specifically for DoS attack detection using TNN.
-    Includes Payload and advanced timing/distribution features for robustness.
-    
+    """Build an extended 12-feature matrix for DoS detection using TNN.
+
     Features:
-    0: Mean Δt                 4: Message Rate              8: Mean Hamming Weight
-    1: Std Δt                  5: Dominant ID Frequency     9: Data Change Rate
-    2: Min Δt                  6: Shannon ID Entropy       10: ID Gaps
-    3: Max Δt                  7: High Priority ID Ratio   11: Skewness Δt
+      0: Mean Δt              4: Message Rate             8: Mean Hamming Weight
+      1: Std Δt               5: Dominant ID Frequency    9: Data Change Rate
+      2: Min Δt               6: Shannon ID Entropy      10: Unique ID Ratio
+      3: Max Δt               7: Timing CV (std/mean)    11: Skewness Δt
+
+    Window label = 1 (attack) only if >= 30% of frames are attack.
     """
-    import logging
-    logger = logging.getLogger(__name__)
+    df = _clean_dos_dataframe(df)
 
     timestamps = df["Timestamp"].to_numpy(dtype=np.float64)
     ids = df["ID"].to_numpy()
     labels = df["label"].to_numpy()
-    
-    # Prepare the payload data. (Data0 -> Data7)
+
     payload_cols = [f"Data{i}" for i in range(8)]
     existing_cols = [c for c in payload_cols if c in df.columns]
     payload = np.zeros((len(df), 8), dtype=np.uint8)
@@ -386,7 +417,6 @@ def build_dos_tnn_feature_matrix(
     n = len(df)
     n_windows = max(1, n // window_size)
 
-    # Initialize the matrix X (12 features)
     X = np.zeros((n_windows, 12), dtype=np.float32)
     y = np.zeros(n_windows, dtype=np.int32)
 
@@ -399,59 +429,45 @@ def build_dos_tnn_feature_matrix(
         win_labels = labels[start:end]
         win_payload = payload[start:end]
 
-        # ------------------------------------------------
-        # Group 1: Timing Features (F0, F1, F2, F3, F4, F11)
-        # ------------------------------------------------
+        # --- Timing features (F0, F1, F2, F3, F4, F7, F11) ---
         if len(win_ts) > 1:
             dt = np.diff(win_ts)
-            X[w, 0] = dt.mean()
-            X[w, 1] = dt.std()
+            mean_dt = dt.mean()
+            std_dt = dt.std()
+            X[w, 0] = mean_dt
+            X[w, 1] = std_dt
             X[w, 2] = dt.min()
             X[w, 3] = dt.max()
-            
-            # F4: Message Rate
+
             time_span = win_ts[-1] - win_ts[0]
             X[w, 4] = len(win_ts) / max(time_span, 1e-6)
-            
-            # F11: Skewness Δt (Use manual methods to avoid importing scipy.)
-            # Fisher-Pearson Formula: E[((x - mu) / sigma)^3]
-            std_dt = X[w, 1]
-            if std_dt > 1e-6:
-                X[w, 11] = np.mean(((dt - X[w, 0]) / std_dt) ** 3)
-            else:
-                X[w, 11] = 0.0
 
-        # ------------------------------------------------
-        # Group 2: ID Features (F5, F6, F7, F10)
-        # ------------------------------------------------
+            X[w, 7] = std_dt / max(mean_dt, 1e-12)
+
+            if std_dt > 1e-6:
+                X[w, 11] = np.mean(((dt - mean_dt) / std_dt) ** 3)
+
+        # --- ID features (F5, F6, F10) ---
         if len(win_ids) > 0:
             unique_ids, counts = np.unique(win_ids, return_counts=True)
             probs = counts / len(win_ids)
-            
-            X[w, 5] = probs.max()                                          # F5: Dominant Freq
-            X[w, 6] = float(-np.sum(probs * np.log2(probs + 1e-12)))       # F6: Entropy
-            X[w, 7] = np.sum(win_ids < 256) / len(win_ids)                 # F7: High Priority Ratio
-            
-            # F10: ID Gaps 
-            # Assuming the ID range is from Min(ID) to Max(ID). Number of missing IDs = (Gaps) - (Number of unique IDs)
-            id_range = int(win_ids.max() - win_ids.min() + 1)
-            X[w, 10] = max(0, id_range - len(unique_ids))
 
-        # ------------------------------------------------
-        # Group 3: Payload Features (F8, F9)
-        # ------------------------------------------------
+            X[w, 5] = probs.max()
+            X[w, 6] = float(-np.sum(probs * np.log2(probs + 1e-12)))
+            X[w, 10] = len(unique_ids) / window_size
+
+        # --- Payload features (F8, F9) ---
         if len(win_payload) > 0:
-            # F8: Mean Hamming Weight (Count the total number of 1 bits in all 8 bytes, then calculate the average.)
             X[w, 8] = np.mean(np.unpackbits(win_payload, axis=1).sum(axis=1))
-            
-            # F9: Data Change Rate (The percentage of frames with changed data compared to the frame immediately preceding it.)
             if len(win_payload) > 1:
-                # np.diff trên axis=0 subtract the previous line from the following line. If != 0, it means a byte has been changed.
                 changes = np.any(np.diff(win_payload, axis=0) != 0, axis=1)
                 X[w, 9] = np.sum(changes) / len(changes)
 
-        # Label: Any packet that is an Attack -> That window is an Attack
-        y[w] = int(win_labels.any())
-        
-    logger.info("DoS TNN Feature matrix constructed: %s (12 features)", X.shape)
+        attack_ratio = win_labels.sum() / window_size
+        y[w] = int(attack_ratio >= _DOS_ATTACK_RATIO_THRESHOLD)
+
+    logger.info(
+        "DoS TNN feature matrix: %s, attack windows: %d / %d (threshold=%.0f%%)",
+        X.shape, y.sum(), n_windows, _DOS_ATTACK_RATIO_THRESHOLD * 100,
+    )
     return X, y
