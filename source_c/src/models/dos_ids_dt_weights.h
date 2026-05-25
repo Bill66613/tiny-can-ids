@@ -10,7 +10,7 @@
 #define DOS_IDS_DT_SAMPLING_RATE_MS 1
 
 /* --- Model Structure --- */
-#define DOS_IDS_DT_N_NODES 13
+#define DOS_IDS_DT_N_NODES 11
 #define DOS_IDS_DT_N_CLASSES 2
 #define DOS_IDS_DT_MAX_DEPTH 5
 
@@ -29,30 +29,30 @@ typedef struct {
 void dos_ids_dt_process_window(const CAN_Frame_t *window, int *result);
 
 /* Feature index to split on (-1 = leaf) */
-static const int8_t dos_ids_dt_feature_index[13] = {
-    3, 3, 0, -1, -1, 5, -1, 5, 5, -1, -1, -1, -1
+static const int8_t dos_ids_dt_feature_index[11] = {
+    3, 3, -1, 5, -1, 5, 0, -1, -1, -1, -1
 };
 
 /* Split threshold per node */
-static const float dos_ids_dt_threshold[13] = {
-    0.29000002f, 0.26999998f, 0.00041825f, -2.00000000f, -2.00000000f,
-    0.00022554f, -2.00000000f, 0.00022995f, 0.00022805f, -2.00000000f,
-    -2.00000000f, -2.00000000f, -2.00000000f
+static const float dos_ids_dt_threshold[11] = {
+    0.29000002f, 0.26999998f, -2.00000000f, 0.00022554f, -2.00000000f,
+    0.00022995f, 0.00041994f, -2.00000000f, -2.00000000f, -2.00000000f,
+    -2.00000000f
 };
 
 /* Left child index (-1 = leaf) */
-static const int8_t dos_ids_dt_children_left[13] = {
-    1, 2, 3, -1, -1, 6, -1, 8, 9, -1, -1, -1, -1
+static const int8_t dos_ids_dt_children_left[11] = {
+    1, 2, -1, 4, -1, 6, 7, -1, -1, -1, -1
 };
 
 /* Right child index (-1 = leaf) */
-static const int8_t dos_ids_dt_children_right[13] = {
-    12, 5, 4, -1, -1, 7, -1, 11, 10, -1, -1, -1, -1
+static const int8_t dos_ids_dt_children_right[11] = {
+    10, 3, -1, 5, -1, 9, 8, -1, -1, -1, -1
 };
 
 /* Predicted class at leaf (-1 = internal node) */
-static const int8_t dos_ids_dt_leaf_class[13] = {
-    -1, -1, -1, 0, 0, -1, 1, -1, -1, 0, 0, 0, 1
+static const int8_t dos_ids_dt_leaf_class[11] = {
+    -1, -1, 0, -1, 1, -1, -1, 0, 0, 0, 1
 };
 
 #endif /* DOS_IDS_DT_WEIGHTS_H */
