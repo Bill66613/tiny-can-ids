@@ -1,8 +1,6 @@
 name: Build C source
 
 on:
-  push:
-    branches: [nam]
   workflow_call:
     outputs:
       SRC_DIR:
