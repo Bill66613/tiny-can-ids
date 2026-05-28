@@ -30,13 +30,13 @@ void dos_ids_dt_process_window(const CAN_Frame_t *window, int *result);
 
 /* Feature index to split on (-1 = leaf) */
 static const int8_t dos_ids_dt_feature_index[11] = {
-    3, 3, -1, 5, -1, 5, 1, -1, -1, -1, -1
+    3, 3, -1, 5, -1, 5, 0, -1, -1, -1, -1
 };
 
 /* Split threshold per node */
 static const float dos_ids_dt_threshold[11] = {
     0.29000002f, 0.26999998f, -2.00000000f, 0.00022554f, -2.00000000f,
-    0.00022995f, 0.00053751f, -2.00000000f, -2.00000000f, -2.00000000f,
+    0.00022995f, 0.00041994f, -2.00000000f, -2.00000000f, -2.00000000f,
     -2.00000000f
 };
 
