@@ -40,34 +40,83 @@ jobs:
           printf 'q\n' | python tests/simulation/can_attack_sim.py 2>&1 | grep -q "vcan0"
           echo "OK: vcan0 listed in interface menu"
 
-      - name: Test — DoS attack (100 frames)
+      - name: Create normal CAN CSV if not exist
+        run: |
+          FILE=tests/simulation/normal.csv
+          if [ -f $FILE ]; then
+            echo "$FILE already exists, skipping creation."
+          else
+            echo "Creating $FILE with sample normal CAN traffic..."
+            cat > $FILE << 'EOF'
+          1478198377.185137,0100,8,11,22,33,44,55,66,77,88,R
+          1478198377.185629,0200,8,AA,BB,CC,DD,EE,FF,00,11,R
+          1478198377.186119,0300,8,01,02,03,04,05,06,07,08,R
+          1478198377.186612,0400,8,10,20,30,40,50,60,70,80,R
+          EOF
+            echo "Created $FILE"
+            cat $FILE
+          fi
+
+      - name: Test — DoS attack (100 frames) (default normal can traffic)
         run: |
           candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
-          printf '1\n1\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n1\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat /tmp/candump.pid) 2>/dev/null || true
           echo "=== candump: DoS ===" && cat /tmp/candump.log
           truncate -s 0 /tmp/candump.log
 
-      - name: Test — Fuzzy attack (100 frames)
+      - name: Test — DoS attack (100 frames) (csv normal can traffic)
         run: |
           candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
-          printf '1\n2\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n1\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat /tmp/candump.pid) 2>/dev/null || true
+          echo "=== candump: DoS ===" && cat /tmp/candump.log
+          truncate -s 0 /tmp/candump.log
+
+      - name: Test — Fuzzy attack (100 frames) (default normal can traffic)
+        run: |
+          candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
+          printf '1\n2\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat /tmp/candump.pid) 2>/dev/null || true
           echo "=== candump: Fuzzy ===" && cat /tmp/candump.log
           truncate -s 0 /tmp/candump.log
 
-      - name: Test — Gear spoofing (100 frames)
+      - name: Test — Fuzzy attack (100 frames) (csv normal can traffic)
         run: |
           candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
-          printf '1\n3\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n2\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat /tmp/candump.pid) 2>/dev/null || true
+          echo "=== candump: Fuzzy ===" && cat /tmp/candump.log
+          truncate -s 0 /tmp/candump.log
+
+      - name: Test — Gear spoofing (100 frames) (default normal can traffic)
+        run: |
+          candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
+          printf '1\n3\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat /tmp/candump.pid) 2>/dev/null || true
           echo "=== candump: Gear ===" && cat /tmp/candump.log
           truncate -s 0 /tmp/candump.log
 
-      - name: Test — RPM spoofing (100 frames)
+      - name: Test — Gear spoofing (100 frames) (csv normal can traffic)
         run: |
           candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
-          printf '1\n4\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n3\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat /tmp/candump.pid) 2>/dev/null || true
+          echo "=== candump: Gear ===" && cat /tmp/candump.log
+          truncate -s 0 /tmp/candump.log
+
+      - name: Test — RPM spoofing (100 frames) (default normal can traffic)
+        run: |
+          candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
+          printf '1\n4\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat /tmp/candump.pid) 2>/dev/null || true
+          echo "=== candump: RPM ===" && cat /tmp/candump.log
+          truncate -s 0 /tmp/candump.log
+
+      - name: Test — RPM spoofing (100 frames) (csv normal can traffic)
+        run: |
+          candump vcan0 > /tmp/candump.log 2>&1 & echo $! > /tmp/candump.pid
+          printf '1\n4\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat /tmp/candump.pid) 2>/dev/null || true
           echo "=== candump: RPM ===" && cat /tmp/candump.log
           truncate -s 0 /tmp/candump.log
