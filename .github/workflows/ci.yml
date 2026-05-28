@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, nam]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
@@ -89,12 +89,12 @@ jobs:
           done
 
           if [ "$missing" -ne 0 ]; then
-            echo "Generated files in output/:"  
-            if test -d ./output; then  
-              find ./output -maxdepth 2 -type f | sort  
-            else  
-              echo "::error::output/ directory does not exist"  
-            fi  
+            echo "Generated files in output/:"
+            if test -d ./output; then
+              find ./output -maxdepth 2 -type f | sort
+            else
+              echo "::error::output/ directory does not exist"
+            fi
             exit 1
           fi
 
@@ -106,3 +106,6 @@ jobs:
           name: pipeline-output
           path: output/
           retention-days: 7
+
+  run-CI-tests:
+    uses: ./.github/workflows/can-attack-sim.yml

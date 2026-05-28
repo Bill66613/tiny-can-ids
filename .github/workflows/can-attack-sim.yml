@@ -1,8 +1,6 @@
 name: CAN Attack Simulator Smoke Test
 
 on:
-  push:
-    branches: [nam]
   workflow_dispatch:
 
 jobs:
