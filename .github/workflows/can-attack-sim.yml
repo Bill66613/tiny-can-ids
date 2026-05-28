@@ -6,11 +6,23 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-source-c:
+    uses: ./.github/workflows/build-source-c.yaml
+
   can-attack-sim:
     needs: [build-source-c]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: can-ids-binaries
+          path: ${{ needs.build-source-c.outputs.SRC_DIR }}/build-artifacts
+
+      - name: Show downloaded build artifacts
+        run: ls -R ${{ needs.build-source-c.outputs.SRC_DIR }}/build-artifacts
 
       - name: Set up Python
         uses: actions/setup-python@v6
