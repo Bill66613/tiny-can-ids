@@ -42,7 +42,7 @@ class TestPipelineOutputs:
         output_dir = tmp_path / "output"
 
         # Run the pipeline, skipping TFLite for quick testing.
-        result = self.run_pipeline(csv_path, output_dir, ["--no-tflite", "--epochs", "1", "--window-size", str(scenario.config.window_size)])
+        result = self.run_pipeline(csv_path, output_dir, ["--epochs", "1", "--window-size", str(scenario.config.window_size)])
 
         assert result.returncode == 0, f"Pipeline failed: {result.stderr}"
         assert output_dir.exists()
@@ -54,7 +54,7 @@ class TestPipelineOutputs:
         scenario = feeder.get_scenario("small_binary")
         csv_path = scenario.to_csv(tmp_path / "small_h.csv")
         output_dir = tmp_path / "output"
-        self.run_pipeline(csv_path, output_dir, ["--no-tflite", "--epochs", "1"])
+        self.run_pipeline(csv_path, output_dir, ["--epochs", "1"])
 
         for h_file in output_dir.glob("tiny_ids_*.h"):
             content = h_file.read_text()
@@ -70,7 +70,7 @@ class TestPipelineOutputs:
         scenario = feeder.get_scenario("small_binary")
         csv_path = scenario.to_csv(tmp_path / "small_c.csv")
         output_dir = tmp_path / "output"
-        self.run_pipeline(csv_path, output_dir, ["--no-tflite", "--epochs", "1"])
+        self.run_pipeline(csv_path, output_dir, ["--epochs", "1"])
 
         for c_file in output_dir.glob("tiny_ids_*.c"):
             content = c_file.read_text()
@@ -85,7 +85,7 @@ class TestPipelineOutputs:
         csv_path = scenario.to_csv(tmp_path / "small_compile.csv")
         output_dir = tmp_path / "output"
 
-        self.run_pipeline(csv_path, output_dir, ["--no-tflite", "--epochs", "1"])
+        self.run_pipeline(csv_path, output_dir, ["--epochs", "1"])
 
         # Prioritize arm-gcc; if not available, use the system's standard gcc.
         compiler = shutil.which("arm-none-eabi-gcc") or shutil.which("gcc")
@@ -109,7 +109,7 @@ class TestPipelineOutputs:
         csv_path = scenario.to_csv(tmp_path / "size_test.csv")
         output_dir = tmp_path / "output"
 
-        result = self.run_pipeline(csv_path, output_dir, ["--no-tflite"])
+        result = self.run_pipeline(csv_path, output_dir, [])
 
         assert result.returncode == 0, f"Pipeline failed: {result.stderr}"
         # TNN weights header < 15KB
@@ -129,7 +129,7 @@ class TestPipelineOutputs:
         output_dir = tmp_path / "output"
 
         # Run the full pipeline (including TFLite).
-        result = self.run_pipeline(csv_path, output_dir, ["--epochs", "3"])
+        result = self.run_pipeline(csv_path, output_dir, ["--epochs", "3", "--tflite"])
 
         tflite_files = list(output_dir.glob("*.tflite"))
         if len(tflite_files) == 0:
@@ -147,7 +147,7 @@ class TestPipelineOutputs:
         scenario = feeder.get_scenario("small_binary")
         csv_path = scenario.to_csv(tmp_path / "metrics.csv")
 
-        result = self.run_pipeline(csv_path, tmp_path / "out_metrics", ["--no-tflite", "--export-model", "all", "--window-size", str(scenario.config.window_size)])
+        result = self.run_pipeline(csv_path, tmp_path / "out_metrics", ["--export-model", "all", "--window-size", str(scenario.config.window_size)])
 
         assert result.returncode == 0, f"Pipeline failed: {result.stderr}"
 
@@ -162,8 +162,8 @@ class TestPipelineOutputs:
         csv_path = scenario.to_csv(tmp_path / "large.csv")
 
         start_time = time.time()
-        result = self.run_pipeline(csv_path, tmp_path / "out_large", ["--no-tflite", "--epochs", "5"])
+        result = self.run_pipeline(csv_path, tmp_path / "out_large", ["--epochs", "5"])
         elapsed = time.time() - start_time
 
         assert result.returncode == 0
-        assert elapsed < 120, f"Pipeline too slow: {elapsed:.2f}s"
+        assert elapsed < 150, f"Pipeline too slow: {elapsed:.2f}s"

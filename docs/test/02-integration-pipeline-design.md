@@ -52,8 +52,7 @@ def test_integration_pipeline_runs_tiny(feeder, tmp_path):
     result = subprocess.run([
         "python", "-m", "scripts.run_pipeline",
         "--dataset", str(csv_path),
-        "--output-dir", str(output_dir),
-        "--no-tflite"  # Skip TFLite for speed
+        "--output-dir", str(output_dir)
     ], capture_output=True, text=True)
     
     assert result.returncode == 0  # Pipeline completed
