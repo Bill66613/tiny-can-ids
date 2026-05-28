@@ -1,6 +1,7 @@
 name: CAN Attack Simulator Smoke Test
 
 on:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
