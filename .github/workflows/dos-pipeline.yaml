@@ -2,7 +2,7 @@ name: TinyML DoS Pipeline
 
 on:
   push:
-    branches: [ bugfix/#20 ]
+    branches: [ bugfix/#20-hien ]
 
 jobs:
   generate-and-upload-models:
