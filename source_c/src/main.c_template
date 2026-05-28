@@ -140,11 +140,11 @@ static int open_can_socket(const char *interface_name)
 	return fd;
 }
 
-static double now_timestamp_us(void)
+static double now_timestamp_s(void)
 {
 	struct timespec ts;
 	clock_gettime(CLOCK_REALTIME, &ts);
-	return (double)ts.tv_sec * 1000000.0 + (double)ts.tv_nsec / 1000.0;
+	return (double)ts.tv_sec  + ((double)ts.tv_nsec / 1000000000.0);
 }
 
 static void process_can_window_x(
@@ -302,7 +302,7 @@ static int listen_for_can_frames(int fd, const app_config_t *cfg)
 		}
 
 		CAN_Frame_t sample;
-		sample.timestamp = now_timestamp_us();
+		sample.timestamp = now_timestamp_s();
 		sample.id = frame.can_id & CAN_SFF_MASK;
 		sample.dlc = frame.can_dlc;
 		memset(sample.data, 0, sizeof(sample.data));
