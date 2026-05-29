@@ -84,12 +84,12 @@ jobs:
           echo "$BIN --help"
           "$BIN" --help
 
-      - name: NAM - Test — interface discovery
+      - name: Test — interface discovery
         run: |
           printf 'q\n' | python tests/simulation/can_attack_sim.py 2>&1 | grep -q "vcan0"
           echo "OK: vcan0 listed in interface menu"
 
-      - name: Test — DoS attack (100 frames)
+      - name: NAM - Test — DoS attack (100 frames)
         run: |
           BIN=${{ needs.build-source-c.outputs.SRC_DIR }}/build/native/can_test_app
           mkdir -p /tmp/can-logs
