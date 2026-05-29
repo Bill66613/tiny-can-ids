@@ -13,7 +13,7 @@ env:
 
 jobs:
   generate-models:
-    uses: ./.github/workflows/dos-pipeline.yaml
+    uses: ./.github/workflows/*-pipeline.yaml
 
   build-source-c:
     needs: [generate-models]
@@ -40,7 +40,7 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: output-c
-          path: ${{ env.SRC_DIR }}/src
+          path: ${{ env.SRC_DIR }}/src/models
 
       - name: Generate main.c from template
         shell: bash
