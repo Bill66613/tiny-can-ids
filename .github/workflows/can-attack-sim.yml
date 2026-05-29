@@ -17,16 +17,12 @@ jobs:
   # generate-models-rpm:
   #   uses: ./.github/workflows/rpm-pipeline.yaml
 
-  generate-models-test:
-    uses: ./.github/workflows/test-pipeline.yaml
-
   build-inference-app:
     needs: [
         generate-models-dos,
         # generate-models-fuzzy,
         # generate-models-gear,
         # generate-models-rpm,
-        generate-models-test,
       ]
     uses: ./.github/workflows/build-source-c.yaml
 
@@ -37,7 +33,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: can-ids-binaries
           path: ${{ needs.build-inference-app.outputs.SRC_DIR }}/build-artifacts

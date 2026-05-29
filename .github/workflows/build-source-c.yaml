@@ -33,7 +33,7 @@ jobs:
           python-version: "3.11"
 
       - name: Download generated C models from pipeline
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: output-c-*
           merge-multiple: true
