@@ -39,7 +39,7 @@ jobs:
           path: ${{ needs.build-inference-app.outputs.SRC_DIR }}
 
       - name: Show downloaded build artifacts
-        run: ls -laR ${{ needs.build-inference-app.outputs.SRC_DIR }}/*
+        run: ls -laR ${{ needs.build-inference-app.outputs.SRC_DIR }}/build/*
 
       - name: Make binary executable
         run: chmod +x ${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
@@ -70,12 +70,7 @@ jobs:
       - name: Install can-utils
         run: sudo apt-get install -y can-utils
 
-      - name: Test — interface discovery
-        run: |
-          printf 'q\n' | python tests/simulation/can_attack_sim.py 2>&1 | grep -q "vcan0"
-          echo "OK: vcan0 listed in interface menu"
-
-      - name: Run binary smoke test on vcan0
+      - name: Show help output of CAN test app
         run: |
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
 
@@ -88,6 +83,43 @@ jobs:
           echo "Print help output"
           echo "$BIN --help"
           "$BIN" --help
+
+      - name: NAM - Test — interface discovery
+        run: |
+          printf 'q\n' | python tests/simulation/can_attack_sim.py 2>&1 | grep -q "vcan0"
+          echo "OK: vcan0 listed in interface menu"
+
+      - name: Test — DoS attack (100 frames)
+        run: |
+          BIN=${{ needs.build-source-c.outputs.SRC_DIR }}/build/native/can_test_app
+          mkdir -p /tmp/can-logs
+          for model in dt tnn; do
+            echo "=== --attack-type dos --model ${model} --interface vcan0 --timeout 5 ==="
+            stdbuf -oL -eL "$BIN" --attack-type dos --model "$model" --interface vcan0 --timeout 5 > "/tmp/can_test_app_${model}.log" 2>&1 & echo $! > "/tmp/can_test_app_${model}.pid"
+          done
+
+          echo "=== Starting shared candump DoS Attack ==="
+          candump vcan0 > "/tmp/candump.log" 2>&1 & echo $! > "/tmp/candump.pid"
+          printf '1\n1\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          sleep 10
+          kill $(cat "/tmp/candump.pid") 2>/dev/null || true
+          echo "=== candump: DoS (shared) ===" && cat "/tmp/candump.log"
+          cp "/tmp/candump.log" "/tmp/can-logs/dos_candump.log" || true
+
+          for model in dt tnn; do
+            kill $(cat "/tmp/can_test_app_${model}.pid") 2>/dev/null || true
+            echo "=== can_test_app log (${model}) ===" && cat "/tmp/can_test_app_${model}.log"
+            cp "/tmp/can_test_app_${model}.log" "/tmp/can-logs/dos_can_test_app_${model}.log" || true
+          done
+
+      - name: NAM - Upload simulator logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: can-attack-sim-logs
+          path: /tmp/can-logs/*.log
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Test — DoS attack (100 frames)
         run: |
