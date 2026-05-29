@@ -91,7 +91,7 @@ jobs:
 
       - name: NAM - Test — DoS attack (100 frames)
         run: |
-          BIN=${{ needs.build-source-c.outputs.SRC_DIR }}/build/native/can_test_app
+          BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           mkdir -p /tmp/can-logs
           for model in dt tnn; do
             echo "=== --attack-type dos --model ${model} --interface vcan0 --timeout 5 ==="
