@@ -38,7 +38,7 @@ jobs:
       - name: Upload Generated C Models
         uses: actions/upload-artifact@v4
         with:
-          name: output-c
+          name: output-c-dos
           path: output/dos_only/
           retention-days: 1
           if-no-files-found: error

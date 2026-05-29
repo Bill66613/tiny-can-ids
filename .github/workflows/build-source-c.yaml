@@ -12,11 +12,7 @@ env:
   SRC_DIR: source_c
 
 jobs:
-  generate-models:
-    uses: ./.github/workflows/*-pipeline.yaml
-
   build-source-c:
-    needs: [generate-models]
     runs-on: ubuntu-latest
     outputs:
       SRC_DIR: ${{ steps.build.outputs.SRC_DIR }}
@@ -39,8 +35,12 @@ jobs:
       - name: Download generated C models from pipeline
         uses: actions/download-artifact@v5
         with:
-          name: output-c
+          pattern: output-c-*
+          merge-multiple: true
           path: ${{ env.SRC_DIR }}/src/models
+
+      - name: Show downloaded C models
+        run: ls -R ${{ env.SRC_DIR }}/src/models
 
       - name: Generate main.c from template
         shell: bash
