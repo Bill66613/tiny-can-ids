@@ -40,10 +40,15 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: output-c
-          path: ${{ env.SRC_DIR }}/src/models
+          path: ${{ env.SRC_DIR }}/src
 
       - name: Generate main.c from template
-        run: python ${{ env.SRC_DIR }}/gen_main.py
+        shell: bash
+        run: |
+          python ${{ env.SRC_DIR }}/gen_main.py || {
+            echo "::error::gen_main.py failed — no model headers detected or template error"
+            exit 1
+          }
 
       - name: Build C source with Makefile (multi-arch)
         id: build

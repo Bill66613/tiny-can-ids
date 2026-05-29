@@ -102,9 +102,10 @@ def generate(dry_run: bool = False) -> int:
     entries = scan_models(SRC_MODELS_DIR)
     if not entries:
         print(
-            "[WARN] No model headers found — handler table will be empty.",
+            "Error: no model headers found in " + str(SRC_MODELS_DIR) + " — cannot generate main.c.",
             file=sys.stderr,
         )
+        return 1
 
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     result = template.replace("// ##TAG_1", build_tag1(entries))
