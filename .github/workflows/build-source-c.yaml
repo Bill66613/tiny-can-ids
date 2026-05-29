@@ -33,7 +33,7 @@ jobs:
           python-version: "3.11"
 
       - name: Download generated C models from pipeline
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           pattern: output-c-*
           merge-multiple: true
@@ -98,7 +98,7 @@ jobs:
             ${{ steps.build.outputs.SRC_DIR }}/build/aarch64/can_test_app
             ${{ steps.build.outputs.SRC_DIR }}/build/armv7/can_test_app
             ${{ steps.build.outputs.SRC_DIR }}/src-gen/main.c
-          retention-days: 2
+          retention-days: 1
           if-no-files-found: error
           compression-level: 6
           overwrite: true
