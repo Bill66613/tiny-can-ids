@@ -17,7 +17,7 @@ def test_pipeline_execution_time(tmp_path):
 
     start_time = time.time()
     # Run a simulated scenario.
-    subprocess.run([sys.executable, "scripts/run_pipeline.py", "--no-tflite", "--epochs", "1"], env=env, capture_output=True, check=True)
+    subprocess.run([sys.executable, "scripts/run_pipeline.py", "--epochs", "1"], env=env, capture_output=True, check=True)
 
     duration = time.time() - start_time
     

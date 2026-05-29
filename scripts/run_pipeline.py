@@ -37,7 +37,9 @@ import logging
 import sys
 import joblib
 import os
+import json
 
+import pandas as pd
 from pathlib import Path
 
 try:
@@ -80,8 +82,9 @@ _DEFAULTS: dict = {
     "output_dir": "output",
     "window_size": 50,
     "epochs": 20,
-    "no_tflite": False,
+    "tflite": False,
     "export_model": "tnn",
+    "mode": "standard",
 }
 
 # TOML key → argparse dest mapping (handles hyphens vs underscores).
@@ -91,7 +94,7 @@ _TOML_KEY_MAP: dict[str, str] = {
     "output-dir": "output_dir",
     "window-size": "window_size",
     "export-model": "export_model",
-    "no-tflite": "no_tflite",
+    "tflite": "tflite",
 }
 
 
@@ -140,11 +143,9 @@ def _parse_args() -> argparse.Namespace:
         help="Training epochs for the Tiny Neural Network (default: 20).",
     )
     parser.add_argument(
-        "--no-tflite",
-        action="store_const",
-        const=True,
-        default=None,
-        help="Skip TFLite export (useful when TensorFlow is not installed).",
+        "--tflite",
+        action="store_true",
+        help="Export to TFLite (forces Tiny Neural Network training).",
     )
     parser.add_argument(
         "--export-model",
@@ -158,7 +159,8 @@ def _parse_args() -> argparse.Namespace:
 
     # --- Layer 2: config file ---
     config: dict = {}
-    config_path = Path(cli_args.config) if cli_args.config else Path("pipeline.toml")
+    config_path = Path(cli_args.config) if cli_args.config else Path(
+        "pipeline.toml")
     if config_path.is_file():
         logger.info("Loading config from %s", config_path)
         raw = _load_config(config_path)
@@ -212,7 +214,8 @@ def load_data(args):
         raw_df = load_can_dataset(args.dataset)
     else:
         logger.info("No dataset provided – generating synthetic CAN data")
-        raw_df = generate_synthetic_can_data(n_normal=2000, n_attack=400, seed=42)
+        raw_df = generate_synthetic_can_data(
+            n_normal=2000, n_attack=400, seed=42)
 
     logger.info("Raw frames: %d", len(raw_df))
     return raw_df, num_classes, class_names
@@ -221,9 +224,9 @@ def load_data(args):
 # ------------------------------------------------------------------
 # 2. Pre-process & # 3. Feature engineering
 # ------------------------------------------------------------------
-def preprocess_features(raw_df, window_size):
+def preprocess_features(args, raw_df, window_size, is_dos=False):
     from can_ids.data import preprocess_can_data
-    from can_ids.features import build_feature_matrix
+    from can_ids.features import build_feature_matrix, build_dos_feature_matrix, build_dos_tnn_feature_matrix
 
     df = preprocess_can_data(raw_df)
     logger.info(
@@ -232,7 +235,16 @@ def preprocess_features(raw_df, window_size):
         100 * df["label"].mean(),
     )
 
-    X, y = build_feature_matrix(df, window_size=window_size)
+    if is_dos:
+        if args.export_model == "dt":
+            X, y = build_dos_feature_matrix(df, window_size=window_size)
+        elif args.export_model == "tnn":
+            X, y = build_dos_tnn_feature_matrix(df, window_size=window_size)
+        else:
+            X, y = build_dos_tnn_feature_matrix(df, window_size=window_size)
+    else:
+        X, y = build_feature_matrix(df, window_size=window_size)
+
     logger.info("Feature matrix: %s  labels: %s", X.shape, np.bincount(y))
     return X, y
 
@@ -247,13 +259,13 @@ def split_scale(X, y):
     scaler = StandardScaler()
     X_train_s = scaler.fit_transform(X_train)
     X_test_s = scaler.transform(X_test)
-    return X_train_s, X_test_s, y_train, y_test, scaler
+    return X_train, X_test, X_train_s, X_test_s, y_train, y_test, scaler
 
 
 # ------------------------------------------------------------------
 # 5. Train models (only what's needed)
 # ------------------------------------------------------------------
-def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler, output_dir):
+def train_models(args, X_train, X_train_s, y_train, X_test, X_test_s, num_classes, scaler, output_dir):
     from can_ids.models import (
         train_logistic_regression,
         train_decision_tree,
@@ -262,7 +274,7 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler, output
 
     train_all = args.export_model in ("all", "best")
     # TFLite needs TNN even if export target is different
-    need_tnn = train_all or args.export_model == "tnn" or not args.no_tflite
+    need_tnn = train_all or args.export_model == "tnn" or args.tflite
     need_lr = train_all or args.export_model == "lr"
     need_dt = train_all or args.export_model == "dt"
 
@@ -274,17 +286,19 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler, output
     if need_lr:
         logger.info("Training Logistic Regression …")
         lr_model = train_logistic_regression(X_train_s, y_train)
-        models["lr"] = ("Logistic Regression", lr_model, lr_model.predict(X_test_s))
+        models["lr"] = ("Logistic Regression", lr_model,
+                        lr_model.predict(X_test_s))
 
         # Save Logistic Regression model
         lr_checkpoint_path = checkpoint_dir / "tiny_ids_lr_save_model.joblib"
         joblib.dump({"model": lr_model, "scaler": scaler}, lr_checkpoint_path)
-        logger.info("Saved Logistic Regression checkpoint to %s", lr_checkpoint_path)
+        logger.info("Saved Logistic Regression checkpoint to %s",
+                    lr_checkpoint_path)
 
     if need_dt:
         logger.info("Training Decision Tree …")
-        dt_model = train_decision_tree(X_train_s, y_train, max_depth=5)
-        models["dt"] = ("Decision Tree", dt_model, dt_model.predict(X_test_s))
+        dt_model = train_decision_tree(X_train, y_train, max_depth=5)
+        models["dt"] = ("Decision Tree", dt_model, dt_model.predict(X_test))
 
         # Save Decision Tree model
         dt_checkpoint_path = checkpoint_dir / "tiny_ids_dt_save_model.joblib"
@@ -293,14 +307,17 @@ def train_models(args, X_train_s, y_train, X_test_s, num_classes, scaler, output
 
     if need_tnn:
         logger.info("Training Tiny Neural Network (%d classes) …", num_classes)
-        tnn = TinyNeuralNetwork(input_dim=X_train_s.shape[1], num_classes=num_classes)
-        tnn.fit(X_train_s, y_train, epochs=args.epochs, verbose=0, balance_classes=True)
+        tnn = TinyNeuralNetwork(
+            input_dim=X_train_s.shape[1], num_classes=num_classes)
+        tnn.fit(X_train_s, y_train, epochs=args.epochs,
+                verbose=0, balance_classes=True)
         models["tnn"] = ("Tiny Neural Network", tnn, tnn.predict(X_test_s))
 
         # Save Tiny Neural Network model
         tnn_checkpoint_path = checkpoint_dir / "tiny_ids_tnn_save_model.joblib"
         joblib.dump({"model": tnn, "scaler": scaler}, tnn_checkpoint_path)
-        logger.info("Saved Tiny Neural Network checkpoint to %s", tnn_checkpoint_path)
+        logger.info("Saved Tiny Neural Network checkpoint to %s",
+                    tnn_checkpoint_path)
 
     return models
 
@@ -338,8 +355,8 @@ def quantization(models):
 # ------------------------------------------------------------------
 # 8. TFLite export
 # ------------------------------------------------------------------
-def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output_dir):
-    if not args.no_tflite and "tnn" in models:
+def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output_dir, is_dos=False):
+    if args.tflite and "tnn" in models:
         try:
             from can_ids.models import export_to_tflite, save_tflite_model
             from can_ids.models.export import run_tflite_inference
@@ -347,50 +364,75 @@ def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output
             tnn = models["tnn"][1]
             logger.info("Exporting to TFLite (full-integer quantization) …")
             tflite_bytes = export_to_tflite(tnn, X_train_s[:200])
-            tflite_path = save_tflite_model(tflite_bytes, output_dir / "tiny_ids_model")
+            file_prefix = "dos_ids_tnn_model" if is_dos else "tiny_ids_model"
+
+            tflite_path = save_tflite_model(
+                tflite_bytes, output_dir / file_prefix)
             logger.info("TFLite model saved to %s", tflite_path)
 
             # Validate TFLite inference
             logger.info("Validating TFLite inference …")
             tflite_preds = run_tflite_inference(tflite_bytes, X_test_s)
-            _report("TFLite (host validation)", tflite_preds, y_test, class_names)
+            _report("TFLite (host validation)",
+                    tflite_preds, y_test, class_names)
 
         except (ImportError, RuntimeError, OSError) as exc:
             logger.warning("TFLite export/validation failed: %s", exc)
     else:
-        logger.info("TFLite export skipped (--no-tflite)")
+        logger.info("TFLite export skipped (missing --tflite flag)")
 
 
 # ------------------------------------------------------------------
 # 9. C/C++ export
 # ------------------------------------------------------------------
-def c_export(args, models, y_test, output_dir):
-    from can_ids.deploy import export_model_to_c
+def c_export(args, models, y_test, output_dir, is_dos=False):
+    from can_ids.deploy import export_model_to_c, export_dos_model_to_c
 
     export_targets = _resolve_export_targets(args.export_model, models, y_test)
 
     logger.info("Exporting C code for: %s", ", ".join(export_targets))
     for model_type in export_targets:
         name, model_obj, _ = models[model_type]
-        header, source = export_model_to_c(
-            model_obj, model_type, output_dir, model_name="tiny_ids"
-        )
+
+        if is_dos:
+            header, source = export_dos_model_to_c(
+                model_obj,
+                model_type,
+                output_dir,
+                model_name="dos_ids",
+                window_size=args.window_size,
+                n_features=model_obj.input_dim if hasattr(
+                    model_obj, 'input_dim') else 8
+            )
+        else:
+            header, source = export_model_to_c(
+                model_obj, model_type, output_dir, model_name="tiny_ids"
+            )
         logger.info("  %s → %s, %s", name, header.name, source.name)
 
 
 def main() -> None:
     args = _parse_args()
-    output_dir = Path(args.output_dir)
+
+    is_dos = args.dataset and "DoS_dataset.csv" in args.dataset
+    output_dir = Path(args.output_dir) / \
+        "dos_only" if is_dos else Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # --- STANDARD PIPELINE ---
     raw_df, num_classes, class_names = load_data(args)
-    X, y = preprocess_features(raw_df, args.window_size)
-    X_train_s, X_test_s, y_train, y_test, scaler = split_scale(X, y)
+    X, y = preprocess_features(args, raw_df, args.window_size, is_dos=is_dos)
+
+    n_features = X.shape[1]
+    X_train, X_test, X_train_s, X_test_s, y_train, y_test, scaler = split_scale(
+        X, y)
 
     models = train_models(
         args,
+        X_train,
         X_train_s,
         y_train,
+        X_test,
         X_test_s,
         num_classes,
         scaler,
@@ -399,8 +441,13 @@ def main() -> None:
     evaluate(models, y_test, X_test_s, class_names)
 
     quantization(models)
-    tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output_dir)
-    c_export(args, models, y_test, output_dir)
+    tflite_export(args, models, X_train_s, X_test_s, y_test,
+                  class_names, output_dir, is_dos=is_dos)
+    c_export(args, models, y_test, output_dir, is_dos=is_dos)
+
+    if is_dos:
+        _export_dos_metadata(args, models, y_test, scaler,
+                             output_dir, n_features)
 
     logger.info("Pipeline complete. Artifacts in: %s", output_dir.resolve())
 
@@ -477,7 +524,101 @@ def _report(
     print(f"\n{'=' * 60}")
     print(f"  {name}")
     print("=" * 60)
-    print(classification_report(y_true, y_pred, target_names=class_names, digits=4))
+    print(classification_report(y_true, y_pred,
+          target_names=class_names, digits=4))
+
+
+def _export_dos_metadata(args, models, y_test, scaler, output_dir, n_features):
+    from can_ids.models.compress import export_decision_tree_structure
+
+    metadata_path = output_dir / "dos_ids_metadata.json"
+
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except json.JSONDecodeError:
+            metadata = None
+    else:
+        metadata = None
+
+    if metadata is None:
+        metadata = {
+            "project": "tiny-can-ids-dos-only",
+            "version": "3.0",
+            "task": "Binary Classification (Normal vs DoS)",
+            "models": {}
+        }
+
+    if "models" not in metadata:
+        metadata["models"] = {}
+
+    for key, (name, model_obj, y_pred) in models.items():
+        acc = accuracy_score(y_test, y_pred)
+        f1 = f1_score(y_test, y_pred, average="weighted")
+
+        model_info = {
+            "model_name": f"dos_ids_{key}",
+            "validation_result": {
+                "accuracy (> 80%)": round(acc, 4),
+                "f1_score_weighted (> 80%)": round(f1, 4)
+            },
+            "parameters": {
+                "window_size_samples": args.window_size,
+                "window_size_ms": args.window_size * 1,
+                "number_of_features": n_features,
+            }
+        }
+
+        if key == "dt":
+            model_info["model_type"] = "Decision Tree (Pruned)"
+            edt = export_decision_tree_structure(model_obj)
+            model_info["parameters"]["max_depth"] = 5
+            model_info["parameters"]["tree_nodes"] = int(
+                model_obj.tree_.node_count)
+            model_info["parameters"]["memory_footprint_bytes"] = int(
+                edt.memory_footprint_bytes())
+            model_info["feature_names"] = [
+                "mean_inter_arrival_time", "std_inter_arrival_time", "message_rate",
+                "dominant_id_frequency", "id_entropy", "min_inter_arrival_time",
+                "timing_cv", "unique_id_ratio"
+            ]
+            model_info["api_spec"] = {
+                "public_api": "void dos_ids_dt_process_window(const CAN_Frame_t *window, int *result);",
+                "output_mapping": "*result = 0 (Normal) | 1 (DoS Attack)",
+                "artifacts_generated": ["dos_ids_dt_weights.h", "dos_ids_dt_inference.c"]
+            }
+
+        elif key == "tnn":
+            model_info["model_type"] = "Tiny Neural Network (INT8 Quantized)"
+            model_info["parameters"]["epochs"] = args.epochs
+            model_info["parameters"]["requires_scaling"] = True
+            model_info["parameters"]["scaler_file"] = "dos_ids_tnn_scaler.h"
+            model_info["feature_names"] = [
+                "mean_inter_arrival_time", "std_inter_arrival_time", "min_inter_arrival_time",
+                "max_inter_arrival_time", "message_rate", "dominant_id_frequency",
+                "id_entropy", "timing_cv", "mean_hamming_weight",
+                "data_change_rate", "unique_id_ratio", "skewness_inter_arrival_time"
+            ]
+            model_info["api_spec"] = {
+                "public_api": "void dos_ids_tnn_process_window(const CAN_Frame_t *window, int *result);",
+                "output_mapping": "*result = 0 (Normal) | 1 (DoS Attack)",
+                "artifacts_generated": ["dos_ids_tnn_weights.h", "dos_ids_tnn_inference.c", "dos_ids_tnn_model.tflite"]
+            }
+
+            scaler_path = output_dir / "dos_ids_tnn_scaler.h"
+            means = ", ".join([f"{m:.8f}f" for m in scaler.mean_])
+            scales = ", ".join([f"{s:.8f}f" for s in scaler.scale_])
+            content = f"/* Auto-generated Scaler Data - Do not edit */\n#ifndef DOS_IDS_TNN_SCALER_H\n#define DOS_IDS_TNN_SCALER_H\n\n" \
+                f"static const float dos_ids_tnn_scaler_mean[{len(scaler.mean_)}] = {{ {means} }};\n" \
+                f"static const float dos_ids_tnn_scaler_scale[{len(scaler.scale_)}] = {{ {scales} }};\n\n" \
+                f"#endif /* DOS_IDS_TNN_SCALER_H */\n"
+            scaler_path.write_text(content)
+
+        metadata["models"][key] = model_info
+
+    with open(output_dir / "dos_ids_metadata.json", "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4)
 
 
 if __name__ == "__main__":
