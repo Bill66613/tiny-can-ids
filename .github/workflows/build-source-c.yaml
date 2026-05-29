@@ -8,10 +8,6 @@ on:
         value: ${{ jobs.build-source-c.outputs.SRC_DIR }}
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   SRC_DIR: source_c
 
