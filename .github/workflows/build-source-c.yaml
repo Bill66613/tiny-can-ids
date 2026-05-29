@@ -12,7 +12,11 @@ env:
   SRC_DIR: source_c
 
 jobs:
+  generate-models:
+    uses: ./.github/workflows/dos-pipeline.yaml
+
   build-source-c:
+    needs: [generate-models]
     runs-on: ubuntu-latest
     outputs:
       SRC_DIR: ${{ steps.build.outputs.SRC_DIR }}
@@ -31,6 +35,12 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+
+      - name: Download generated C models from pipeline
+        uses: actions/download-artifact@v5
+        with:
+          name: output-c
+          path: ${{ env.SRC_DIR }}/src/models
 
       - name: Generate main.c from template
         run: python ${{ env.SRC_DIR }}/gen_main.py
