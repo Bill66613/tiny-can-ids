@@ -4,6 +4,10 @@ on:
   workflow_call:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   generate-models-dos:
     uses: ./.github/workflows/dos-pipeline.yaml
@@ -36,10 +40,13 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: can-ids-binaries
-          path: ${{ needs.build-inference-app.outputs.SRC_DIR }}/build-artifacts
+          path: ${{ needs.build-inference-app.outputs.SRC_DIR }}
 
       - name: Show downloaded build artifacts
-        run: ls -R ${{ needs.build-inference-app.outputs.SRC_DIR }}/build-artifacts
+        run: ls -laR ${{ needs.build-inference-app.outputs.SRC_DIR }}/*
+
+      - name: Make binary executable
+        run: chmod +x ${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -71,6 +78,20 @@ jobs:
         run: |
           printf 'q\n' | python tests/simulation/can_attack_sim.py 2>&1 | grep -q "vcan0"
           echo "OK: vcan0 listed in interface menu"
+
+      - name: Run binary smoke test on vcan0
+        run: |
+          BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
+
+          echo "========================================"
+          echo " Smoke test: native binary on vcan0"
+          echo "========================================"
+          echo "Binary: $BIN"
+          echo ""
+          echo "========================================"
+          echo "Print help output"
+          echo "$BIN --help"
+          "$BIN" --help
 
       - name: Test — DoS attack (100 frames)
         run: |
