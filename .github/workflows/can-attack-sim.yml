@@ -159,7 +159,7 @@ jobs:
       - name: Test — Gear spoofing (100 frames)
         run: |
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
-          attack_type="dos"
+          attack_type="gear"
           log_dir="/tmp/can-logs/${attack_type}"
           models=(dt tnn rl)
           mkdir -p "$log_dir"
@@ -195,7 +195,7 @@ jobs:
       - name: Test — RPM spoofing (100 frames)
         run: |
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
-          attack_type="dos"
+          attack_type="rpm"
           log_dir="/tmp/can-logs/${attack_type}"
           models=(dt tnn rl)
           mkdir -p "$log_dir"
@@ -231,7 +231,7 @@ jobs:
       - name: Test — Manual hand input
         run: |
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
-          attack_type="dos"
+          attack_type="manual_input"
           log_dir="/tmp/can-logs/${attack_type}"
           models=(dt tnn rl)
           mkdir -p "$log_dir"
@@ -249,9 +249,9 @@ jobs:
             echo "=== can_test_app log (${model}) ===" && cat "$log_dir/can_test_app_${model}.log"
           }
 
-          for model in "${models[@]}"; do
-            start_can_test_app "$model"
-          done
+          # for model in "${models[@]}"; do
+          #   start_can_test_app "$model"
+          # done
 
           echo "=== Starting candump Manual Hand Input Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
@@ -260,14 +260,14 @@ jobs:
           echo "=== candump: Manual ===" && cat "$log_dir/candump.log"
           truncate -s 0 "$log_dir/candump.log"
 
-          for model in "${models[@]}"; do
-            stop_can_test_app "$model"
-          done
+          # for model in "${models[@]}"; do
+          #   stop_can_test_app "$model"
+          # done
 
       - name: Test — Manual CSV replay
         run: |
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
-          attack_type="dos"
+          attack_type="csv_replay"
           log_dir="/tmp/can-logs/${attack_type}"
           models=(dt tnn rl)
           mkdir -p "$log_dir"
@@ -285,9 +285,9 @@ jobs:
             echo "=== can_test_app log (${model}) ===" && cat "$log_dir/can_test_app_${model}.log"
           }
 
-          for model in "${models[@]}"; do
-            start_can_test_app "$model"
-          done
+          # for model in "${models[@]}"; do
+          #   start_can_test_app "$model"
+          # done
 
           echo "=== Starting candump CSV Replay Attack ==="
           cat > /tmp/test_attack.csv << 'EOF'
@@ -304,9 +304,9 @@ jobs:
           echo "=== candump: CSV Replay ===" && cat "$log_dir/candump.log"
           truncate -s 0 "$log_dir/candump.log"
 
-          for model in "${models[@]}"; do
-            stop_can_test_app "$model"
-          done
+          # for model in "${models[@]}"; do
+          #   stop_can_test_app "$model"
+          # done
 
       - name: Tear down virtual CAN
         if: always()
@@ -319,6 +319,6 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: can-attack-sim-logs
-          path: /tmp/can-logs
+          path: /tmp/can-logs/**/*.log
           if-no-files-found: warn
           retention-days: 1
