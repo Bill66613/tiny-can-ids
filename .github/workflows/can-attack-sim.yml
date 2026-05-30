@@ -95,7 +95,7 @@ jobs:
           start_can_test_app() {
             local model="$1"
             echo "=== --attack-type $attack_type --model ${model} --interface vcan0 --timeout 5 ==="
-            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 > "$log_dir/can_test_app_${model}.log" 2>&1 &
+            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 -v > "$log_dir/can_test_app_${model}.log" 2>&1 &
             echo $! > "$log_dir/can_test_app_${model}.pid"
           }
 
@@ -114,7 +114,6 @@ jobs:
           printf '1\n1\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: DoS ===" && cat "$log_dir/candump.log"
-          truncate -s 0 "$log_dir/candump.log"
 
           for model in "${models[@]}"; do
             stop_can_test_app "$model"
@@ -131,7 +130,7 @@ jobs:
           start_can_test_app() {
             local model="$1"
             echo "=== --attack-type $attack_type --model ${model} --interface vcan0 --timeout 5 ==="
-            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 > "$log_dir/can_test_app_${model}.log" 2>&1 &
+            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 -v > "$log_dir/can_test_app_${model}.log" 2>&1 &
             echo $! > "$log_dir/can_test_app_${model}.pid"
           }
 
@@ -150,7 +149,6 @@ jobs:
           printf '1\n2\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: Fuzzy ===" && cat "$log_dir/candump.log"
-          truncate -s 0 "$log_dir/candump.log"
 
           for model in "${models[@]}"; do
             stop_can_test_app "$model"
@@ -167,7 +165,7 @@ jobs:
           start_can_test_app() {
             local model="$1"
             echo "=== --attack-type $attack_type --model ${model} --interface vcan0 --timeout 5 ==="
-            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 > "$log_dir/can_test_app_${model}.log" 2>&1 &
+            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 -v > "$log_dir/can_test_app_${model}.log" 2>&1 &
             echo $! > "$log_dir/can_test_app_${model}.pid"
           }
 
@@ -186,7 +184,6 @@ jobs:
           printf '1\n3\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: Gear ===" && cat "$log_dir/candump.log"
-          truncate -s 0 "$log_dir/candump.log"
 
           for model in "${models[@]}"; do
             stop_can_test_app "$model"
@@ -203,7 +200,7 @@ jobs:
           start_can_test_app() {
             local model="$1"
             echo "=== --attack-type $attack_type --model ${model} --interface vcan0 --timeout 5 ==="
-            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 > "$log_dir/can_test_app_${model}.log" 2>&1 &
+            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 -v > "$log_dir/can_test_app_${model}.log" 2>&1 &
             echo $! > "$log_dir/can_test_app_${model}.pid"
           }
 
@@ -222,7 +219,6 @@ jobs:
           printf '1\n4\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: RPM ===" && cat "$log_dir/candump.log"
-          truncate -s 0 "$log_dir/candump.log"
 
           for model in "${models[@]}"; do
             stop_can_test_app "$model"
@@ -239,7 +235,7 @@ jobs:
           start_can_test_app() {
             local model="$1"
             echo "=== --attack-type $attack_type --model ${model} --interface vcan0 --timeout 5 ==="
-            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 > "$log_dir/can_test_app_${model}.log" 2>&1 &
+            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 -v > "$log_dir/can_test_app_${model}.log" 2>&1 &
             echo $! > "$log_dir/can_test_app_${model}.pid"
           }
 
@@ -258,7 +254,6 @@ jobs:
           printf '1\n5\n1\n043F 01 45 60 FF 6B 00 00 00\nrepeat 5 0.001\nrepeat abc\n0316 45 29 24 FF 29 24 00 FF\ndone\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: Manual ===" && cat "$log_dir/candump.log"
-          truncate -s 0 "$log_dir/candump.log"
 
           # for model in "${models[@]}"; do
           #   stop_can_test_app "$model"
@@ -275,7 +270,7 @@ jobs:
           start_can_test_app() {
             local model="$1"
             echo "=== --attack-type $attack_type --model ${model} --interface vcan0 --timeout 5 ==="
-            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 > "$log_dir/can_test_app_${model}.log" 2>&1 &
+            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 -v > "$log_dir/can_test_app_${model}.log" 2>&1 &
             echo $! > "$log_dir/can_test_app_${model}.pid"
           }
 
@@ -290,7 +285,7 @@ jobs:
           # done
 
           echo "=== Starting candump CSV Replay Attack ==="
-          cat > /tmp/test_attack.csv << 'EOF'
+          cat > "$log_dir/test_attack.csv" << 'EOF'
           1478198377.185137,0000,8,00,00,00,00,00,00,00,00,T
           1478198377.185629,0000,8,00,00,00,00,00,00,00,00,T
           1478198377.186119,043f,8,01,45,60,ff,6b,00,00,00,T
@@ -299,10 +294,9 @@ jobs:
           1478198377.188000,0100,8,aa,bb,cc,dd,ee,ff,00,11,R
           EOF
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n5\n2\n/tmp/test_attack.csv\nb\ny\n0\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n5\n2\n'"$log_dir"'/test_attack.csv\nb\ny\n0\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: CSV Replay ===" && cat "$log_dir/candump.log"
-          truncate -s 0 "$log_dir/candump.log"
 
           # for model in "${models[@]}"; do
           #   stop_can_test_app "$model"
