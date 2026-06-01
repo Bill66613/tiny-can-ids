@@ -1,0 +1,104 @@
+name: Build C source
+
+on:
+  workflow_call:
+    outputs:
+      SRC_DIR:
+        description: "Path to the source_c directory"
+        value: ${{ jobs.build-source-c.outputs.SRC_DIR }}
+  workflow_dispatch:
+
+env:
+  SRC_DIR: source_c
+
+jobs:
+  build-source-c:
+    runs-on: ubuntu-latest
+    outputs:
+      SRC_DIR: ${{ steps.build.outputs.SRC_DIR }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install cross-compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabihf
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Download generated C models from pipeline
+        uses: actions/download-artifact@v7
+        with:
+          pattern: output-c-*
+          merge-multiple: true
+          path: ${{ env.SRC_DIR }}/src/models
+
+      - name: Show downloaded C models
+        run: ls -R ${{ env.SRC_DIR }}/src/models
+
+      - name: Generate main.c from template
+        shell: bash
+        run: |
+          python ${{ env.SRC_DIR }}/gen_main.py || {
+            echo "::error::gen_main.py failed — no model headers detected or template error"
+            exit 1
+          }
+
+      - name: Build C source with Makefile (multi-arch)
+        id: build
+        shell: bash
+        run: |
+          if [ -d "${SRC_DIR}" ]; then
+            SRC_DIR="${SRC_DIR}"
+          else
+            echo "::error::Could not find ${SRC_DIR} directory"
+            exit 1
+          fi
+
+          echo "SRC_DIR=$SRC_DIR" >> $GITHUB_OUTPUT
+          echo "Building all architectures in ./$SRC_DIR"
+          make -C "$SRC_DIR" multi
+          test -f "$SRC_DIR/build/native/can_test_app"
+          test -f "$SRC_DIR/build/aarch64/can_test_app"
+          test -f "$SRC_DIR/build/armv7/can_test_app"
+
+      - name: Show binary sizes
+        shell: bash
+        run: |
+          echo "=== Binary sizes ==="
+          file ${{ env.SRC_DIR }}/build/native/can_test_app
+          file ${{ env.SRC_DIR }}/build/aarch64/can_test_app
+          file ${{ env.SRC_DIR }}/build/armv7/can_test_app
+          ls -lh ${{ env.SRC_DIR }}/build/*/can_test_app
+
+      - name: Smoke test — native binary
+        shell: bash
+        run: |
+          BIN=${{ env.SRC_DIR }}/build/native/can_test_app
+          echo "=== --help ==="
+          "$BIN" --help
+
+      - name: Stage generated sources
+        run: |
+          mkdir -p ${{ env.SRC_DIR }}/src-gen
+          cp ${{ env.SRC_DIR }}/src/main.c ${{ env.SRC_DIR }}/src-gen/main.c
+
+      - name: Upload build directory as artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: can-ids-binaries
+          path: |
+            ${{ steps.build.outputs.SRC_DIR }}/build/native/can_test_app
+            ${{ steps.build.outputs.SRC_DIR }}/build/aarch64/can_test_app
+            ${{ steps.build.outputs.SRC_DIR }}/build/armv7/can_test_app
+            ${{ steps.build.outputs.SRC_DIR }}/src-gen/main.c
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 6
+          overwrite: true
