@@ -89,7 +89,7 @@ jobs:
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           attack_type="dos"
           log_dir="/tmp/can-logs/${attack_type}"
-          models=(dt tnn rl)
+          models=(dt tnn lr)
           mkdir -p "$log_dir"
 
           start_can_test_app() {
@@ -124,7 +124,7 @@ jobs:
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           attack_type="fuzzy"
           log_dir="/tmp/can-logs/${attack_type}"
-          models=(dt tnn rl)
+          models=(dt tnn lr)
           mkdir -p "$log_dir"
 
           start_can_test_app() {
@@ -159,7 +159,7 @@ jobs:
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           attack_type="gear"
           log_dir="/tmp/can-logs/${attack_type}"
-          models=(dt tnn rl)
+          models=(dt tnn lr)
           mkdir -p "$log_dir"
 
           start_can_test_app() {
@@ -194,7 +194,7 @@ jobs:
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           attack_type="rpm"
           log_dir="/tmp/can-logs/${attack_type}"
-          models=(dt tnn rl)
+          models=(dt tnn lr)
           mkdir -p "$log_dir"
 
           start_can_test_app() {
@@ -229,7 +229,7 @@ jobs:
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           attack_type="manual_input"
           log_dir="/tmp/can-logs/${attack_type}"
-          models=(dt tnn rl)
+          models=(dt tnn lr)
           mkdir -p "$log_dir"
 
           start_can_test_app() {
@@ -264,7 +264,7 @@ jobs:
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           attack_type="csv_replay"
           log_dir="/tmp/can-logs/${attack_type}"
-          models=(dt tnn rl)
+          models=(dt tnn lr)
           mkdir -p "$log_dir"
 
           start_can_test_app() {

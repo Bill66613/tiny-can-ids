@@ -9,10 +9,10 @@ make info
 make
 ```
 
-Build output is placed in `build/`:
+Build output is placed in `build/<arch>/` (default: `build/native/`):
 
 ```bash
-./build/can_test_app --help
+./build/native/can_test_app --help
 ```
 
 ## Setup vcan0
@@ -38,63 +38,33 @@ sudo apt-get install -y can-utils
 
 ## Usage
 
-Synthetic normal traffic:
+Detect DoS attack:
 
 ```bash
-./build/can_test_app --interface vcan0 --mode synthetic --rate 500 --duration 10
+./build/native/can_test_app --interface vcan0 --mode dt --attack-type dos --timeout 10
 ```
 
-DoS attack:
+Detect Fuzzy attack:
 
 ```bash
-./build/can_test_app --interface vcan0 --mode attack --attack-type dos --rate 1000 --duration 10
+./build/native/can_test_app --interface vcan0 --mode tnn --attack-type fuzzy --timeout 10
 ```
 
-Fuzzy attack:
+Detect Gear spoofing:
 
 ```bash
-./build/can_test_app --interface vcan0 --mode attack --attack-type fuzzy --rate 1000 --duration 10
+./build/native/can_test_app --interface vcan0 --mode lr --attack-type gear --timeout 10
 ```
 
-Gear spoofing:
+Detect RPM spoofing:
 
 ```bash
-./build/can_test_app --interface vcan0 --mode attack --attack-type gear --rate 100 --duration 10
-```
-
-RPM spoofing:
-
-```bash
-./build/can_test_app --interface vcan0 --mode attack --attack-type rpm --rate 100 --duration 10
-```
-
-Replay CSV:
-
-```bash
-./build/can_test_app --interface vcan0 --mode replay --dataset sample.csv --rate 500
-```
-
-Replay by timestamp:
-
-```bash
-./build/can_test_app --interface vcan0 --mode replay --dataset sample.csv --realtime
-```
-
-Loop replay:
-
-```bash
-./build/can_test_app --interface vcan0 --mode replay --dataset sample.csv --loop --duration 60
-```
-
-JSON stats:
-
-```bash
-./build/can_test_app --interface vcan0 --mode attack --attack-type dos --json
+./build/native/can_test_app --interface vcan0 --mode dt --attack-type rpm --timeout 10
 ```
 
 ## CSV format
 
-Expected CSV format:
+CSV format:
 
 ```csv
 timestamp,can_id,dlc,data,label
@@ -124,23 +94,3 @@ This package includes the generated TinyML model source:
 - `ids_runtime.h`
 
 The `Makefile` links `tiny_ids_tnn_inference.c`, and that file includes `tiny_ids_tnn_weights.h`, so the binary uses the uploaded trained model weights.
-
-### Generate traffic and run inference on sent frames
-
-```bash
-./build/can_test_app --interface vcan0 --mode attack --attack-type dos --rate 1000 --duration 10 --infer-sent
-```
-
-### Run IDS monitor only
-
-```bash
-./build/can_test_app --interface vcan0 --mode ids --duration 30 --ids-window 64
-```
-
-Then send traffic from another terminal:
-
-```bash
-./build/can_test_app --interface vcan0 --mode attack --attack-type fuzzy --rate 1000 --duration 10
-```
-
-Note: `ids_runtime.c` currently builds a 46-element feature vector from a sliding SocketCAN window. Keep this feature extractor aligned with the Python training feature engineering for best accuracy.

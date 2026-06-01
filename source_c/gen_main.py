@@ -4,7 +4,7 @@ gen_main.py — Generate src/main.c from src/main.c_template.
 
 Scans src/models/ for files matching <attack>_ids_<model>_weights.h, extracts:
   - #define <ATTACK>_IDS_<MODEL>_WINDOW_SIZE <N>
-  - int <attack>_ids_<model>_process_window(const CAN_Frame_t *window);
+  - void <attack>_ids_<model>_process_window(const CAN_Frame_t *window, int *result);
 
 Then substitutes in the template:
   // ##TAG_1  →  #include "models/<file>.h" lines
