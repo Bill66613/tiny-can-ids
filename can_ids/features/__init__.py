@@ -8,6 +8,7 @@ from .engineer import (
     build_feature_matrix,
     build_dos_feature_matrix,
     build_dos_tnn_feature_matrix,
+    build_rpm_dt_feature_matrix,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "build_feature_matrix",
     "build_dos_feature_matrix",
     "build_dos_tnn_feature_matrix",
+    "build_rpm_dt_feature_matrix",
 ]

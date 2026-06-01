@@ -471,3 +471,67 @@ def build_dos_tnn_feature_matrix(
         X.shape, y.sum(), n_windows, _DOS_ATTACK_RATIO_THRESHOLD * 100,
     )
     return X, y
+
+def build_rpm_dt_feature_matrix(
+    df: pd.DataFrame,
+    window_size: int = 50,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build a feature matrix specifically for RPM Spoofing detection (Decision Tree).
+
+    Extracts 6 core features per window:
+      0: Mean Δt (avg_dt)         3: Dominant ID Freq (max_freq)
+      1: Min Δt                   4: Shannon ID Entropy (entropy)
+      2: Message Rate             5: Max Consecutive Same ID (max_consecutive)
+
+    Window label = 1 (attack) if >= 30% of frames are attack frames.
+    """
+    df = _clean_dos_dataframe(df)
+
+    timestamps = df["Timestamp"].to_numpy(dtype=np.float64)
+    ids = df["ID"].to_numpy()
+    labels = df["label"].to_numpy()
+    n = len(df)
+    n_windows = max(1, n // window_size)
+
+    X = np.zeros((n_windows, 6), dtype=np.float32)
+    y = np.zeros(n_windows, dtype=np.int32)
+
+    for w in range(n_windows):
+        start = w * window_size
+        end = (w + 1) * window_size
+
+        win_ts = timestamps[start:end]
+        win_ids = ids[start:end]
+        win_labels = labels[start:end]
+
+        if len(win_ts) > 1:
+            dt = np.diff(win_ts)
+            X[w, 0] = dt.mean()                                      # F0: avg_dt (Mean Delta Time)
+            X[w, 1] = dt.min()                                       # F1: min_dt (Min Delta Time)
+            time_span = win_ts[-1] - win_ts[0]
+            X[w, 2] = len(win_ts) / max(time_span, 1e-6)             # F2: message_rate
+
+        if len(win_ids) > 0:
+            unique_ids, counts = np.unique(win_ids, return_counts=True)
+            probs = counts / len(win_ids)
+            X[w, 3] = probs.max()                                    # F3: max_freq
+            X[w, 4] = float(-np.sum(probs * np.log2(probs + 1e-12))) # F4: entropy
+            
+            
+            padded_ids = np.insert(win_ids, 0, -1)
+            padded_ids = np.append(padded_ids, -2)
+            diff_indices = np.where(padded_ids[1:] != padded_ids[:-1])[0]
+            if len(diff_indices) > 1:
+                max_consecutive = np.max(np.diff(diff_indices))
+            else:
+                max_consecutive = len(win_ids)
+            X[w, 5] = max_consecutive                               # F5: max_consecutive
+
+        attack_ratio = win_labels.sum() / window_size
+        y[w] = int(attack_ratio >= _DOS_ATTACK_RATIO_THRESHOLD)
+
+    logger.info(
+        "RPM DT feature matrix: %s, attack windows: %d / %d (threshold=%.0f%%)",
+        X.shape, y.sum(), n_windows, _DOS_ATTACK_RATIO_THRESHOLD * 100,
+    )
+    return X, y
