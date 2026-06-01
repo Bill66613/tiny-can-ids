@@ -112,5 +112,5 @@ jobs:
           retention-days: 1
 
   run-CI-tests:
-    # needs: pipeline-smoke
+    needs: pipeline-smoke
     uses: ./.github/workflows/can-attack-sim.yml
