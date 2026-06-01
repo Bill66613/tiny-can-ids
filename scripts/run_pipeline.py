@@ -224,9 +224,9 @@ def load_data(args):
 # ------------------------------------------------------------------
 # 2. Pre-process & # 3. Feature engineering
 # ------------------------------------------------------------------
-def preprocess_features(args, raw_df, window_size, is_dos=False):
+def preprocess_features(args, raw_df, window_size, is_dos=False, is_rpm=False):
     from can_ids.data import preprocess_can_data
-    from can_ids.features import build_feature_matrix, build_dos_feature_matrix, build_dos_tnn_feature_matrix
+    from can_ids.features import build_feature_matrix, build_dos_feature_matrix, build_dos_tnn_feature_matrix, build_rpm_dt_feature_matrix
 
     df = preprocess_can_data(raw_df)
     logger.info(
@@ -242,6 +242,8 @@ def preprocess_features(args, raw_df, window_size, is_dos=False):
             X, y = build_dos_tnn_feature_matrix(df, window_size=window_size)
         else:
             X, y = build_dos_tnn_feature_matrix(df, window_size=window_size)
+    elif is_rpm:
+        X, y = build_rpm_dt_feature_matrix(df, window_size=window_size)
     else:
         X, y = build_feature_matrix(df, window_size=window_size)
 
@@ -355,7 +357,7 @@ def quantization(models):
 # ------------------------------------------------------------------
 # 8. TFLite export
 # ------------------------------------------------------------------
-def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output_dir, is_dos=False):
+def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output_dir, is_dos=False, is_rpm=False):
     if args.tflite and "tnn" in models:
         try:
             from can_ids.models import export_to_tflite, save_tflite_model
@@ -364,7 +366,13 @@ def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output
             tnn = models["tnn"][1]
             logger.info("Exporting to TFLite (full-integer quantization) …")
             tflite_bytes = export_to_tflite(tnn, X_train_s[:200])
-            file_prefix = "dos_ids_tnn_model" if is_dos else "tiny_ids_model"
+            
+            if is_dos:
+                file_prefix = "dos_ids_tnn_model"
+            elif is_rpm:
+                file_prefix = "rpm_ids_tnn_model"
+            else:
+                file_prefix = "tiny_ids_model"
 
             tflite_path = save_tflite_model(
                 tflite_bytes, output_dir / file_prefix)
@@ -385,8 +393,8 @@ def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output
 # ------------------------------------------------------------------
 # 9. C/C++ export
 # ------------------------------------------------------------------
-def c_export(args, models, y_test, output_dir, is_dos=False):
-    from can_ids.deploy import export_model_to_c, export_dos_model_to_c
+def c_export(args, models, y_test, output_dir, is_dos=False, is_rpm=False):
+    from can_ids.deploy import export_model_to_c, export_dos_model_to_c, export_rpm_model_to_c
 
     export_targets = _resolve_export_targets(args.export_model, models, y_test)
 
@@ -404,6 +412,16 @@ def c_export(args, models, y_test, output_dir, is_dos=False):
                 n_features=model_obj.input_dim if hasattr(
                     model_obj, 'input_dim') else 8
             )
+        elif is_rpm:
+            header, source = export_rpm_model_to_c(
+                model_obj,
+                model_type,
+                output_dir,
+                model_name="rpm_ids",
+                window_size=args.window_size,
+                n_features=model_obj.input_dim if hasattr(
+                    model_obj, 'input_dim') else 6
+            )
         else:
             header, source = export_model_to_c(
                 model_obj, model_type, output_dir, model_name="tiny_ids"
@@ -415,13 +433,18 @@ def main() -> None:
     args = _parse_args()
 
     is_dos = args.dataset and "DoS_dataset.csv" in args.dataset
-    output_dir = Path(args.output_dir) / \
-        "dos_only" if is_dos else Path(args.output_dir)
+    is_rpm = args.dataset and "RPM_dataset.csv" in args.dataset
+    if is_dos:
+        output_dir = Path(args.output_dir) / "dos_only"
+    elif is_rpm:
+        output_dir = Path(args.output_dir) / "rpm_only"
+    else:
+        output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # --- STANDARD PIPELINE ---
     raw_df, num_classes, class_names = load_data(args)
-    X, y = preprocess_features(args, raw_df, args.window_size, is_dos=is_dos)
+    X, y = preprocess_features(args, raw_df, args.window_size, is_dos=is_dos, is_rpm=is_rpm)
 
     n_features = X.shape[1]
     X_train, X_test, X_train_s, X_test_s, y_train, y_test, scaler = split_scale(
@@ -442,12 +465,13 @@ def main() -> None:
 
     quantization(models)
     tflite_export(args, models, X_train_s, X_test_s, y_test,
-                  class_names, output_dir, is_dos=is_dos)
-    c_export(args, models, y_test, output_dir, is_dos=is_dos)
+                  class_names, output_dir, is_dos=is_dos, is_rpm=is_rpm)
+    c_export(args, models, y_test, output_dir, is_dos=is_dos, is_rpm=is_rpm)
 
     if is_dos:
-        _export_dos_metadata(args, models, y_test, scaler,
-                             output_dir, n_features)
+        _export_dos_metadata(args, models, y_test, scaler, output_dir, n_features)
+    elif is_rpm:
+        _export_rpm_metadata(args, models, y_test, scaler, output_dir, n_features)
 
     logger.info("Pipeline complete. Artifacts in: %s", output_dir.resolve())
 
@@ -620,6 +644,83 @@ def _export_dos_metadata(args, models, y_test, scaler, output_dir, n_features):
     with open(output_dir / "dos_ids_metadata.json", "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=4)
 
+def _export_rpm_metadata(args, models, y_test, scaler, output_dir, n_features):
+    from can_ids.models.compress import export_decision_tree_structure
+
+    metadata_path = output_dir / "rpm_ids_metadata.json"
+
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except json.JSONDecodeError:
+            metadata = None
+    else:
+        metadata = None
+
+    if metadata is None:
+        metadata = {
+            "project": "tiny-can-ids-rpm-only",
+            "version": "1.0",
+            "task": "Binary Classification (Normal vs RPM Spoofing)",
+            "models": {}
+        }
+
+    if "models" not in metadata:
+        metadata["models"] = {}
+
+    for key, (name, model_obj, y_pred) in models.items():
+        acc = accuracy_score(y_test, y_pred)
+        f1 = f1_score(y_test, y_pred, average="weighted")
+
+        model_info = {
+            "model_name": f"rpm_ids_{key}",
+            "validation_result": {
+                "accuracy (> 80%)": round(acc, 4),
+                "f1_score_weighted (> 80%)": round(f1, 4)
+            },
+            "parameters": {
+                "window_size_samples": args.window_size,
+                "window_size_ms": args.window_size * 1,
+                "number_of_features": n_features,
+            }
+        }
+
+        if key == "dt":
+            model_info["model_type"] = "Decision Tree (Pruned)"
+            edt = export_decision_tree_structure(model_obj)
+            model_info["parameters"]["max_depth"] = 5
+            model_info["parameters"]["tree_nodes"] = int(model_obj.tree_.node_count)
+            model_info["parameters"]["memory_footprint_bytes"] = int(edt.memory_footprint_bytes())
+            model_info["feature_names"] = [
+                "avg_dt", "min_dt", "message_rate", 
+                "max_freq", "entropy", "max_consecutive"
+            ]
+            model_info["api_spec"] = {
+                "public_api": "void rpm_ids_dt_process_window(const CAN_Frame_t *window, int *result);",
+                "output_mapping": "*result = 0 (Normal) | 1 (RPM Attack)",
+                "artifacts_generated": ["rpm_ids_dt_weights.h", "rpm_ids_dt_inference.c"]
+            }
+
+        elif key == "tnn":
+            model_info["model_type"] = "Tiny Neural Network (INT8 Quantized)"
+            model_info["parameters"]["epochs"] = args.epochs
+            model_info["parameters"]["requires_scaling"] = True
+            model_info["parameters"]["scaler_file"] = "rpm_ids_tnn_scaler.h"
+            model_info["feature_names"] = [
+                "avg_dt", "min_dt", "message_rate", 
+                "max_freq", "entropy", "max_consecutive"
+            ]
+            model_info["api_spec"] = {
+                "public_api": "void rpm_ids_tnn_predict(const float *input, int n_input, int *result);",
+                "output_mapping": "*result = 0 (Normal) | 1 (RPM Attack)",
+                "artifacts_generated": ["rpm_ids_tnn_weights.h", "rpm_ids_tnn_inference.c", "rpm_ids_tnn_model.tflite"]
+            }
+
+        metadata["models"][key] = model_info
+
+    with open(output_dir / "rpm_ids_metadata.json", "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4)
 
 if __name__ == "__main__":
     main()

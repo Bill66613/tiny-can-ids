@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, nam]
+    branches: [main, develop, feature/#23-train-rpm-model]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
