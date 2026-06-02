@@ -7,6 +7,10 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -55,7 +59,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run pipeline with synthetic data
-        run: python -m scripts.run_pipeline --output-dir output/ --window-size 20 --epochs 3
+        run: python -m scripts.run_pipeline --output-dir output/ --window-size 20 --epochs 3 --tflite
 
       - name: Verify output artifacts
         run: |
@@ -89,12 +93,12 @@ jobs:
           done
 
           if [ "$missing" -ne 0 ]; then
-            echo "Generated files in output/:"  
-            if test -d ./output; then  
-              find ./output -maxdepth 2 -type f | sort  
-            else  
-              echo "::error::output/ directory does not exist"  
-            fi  
+            echo "Generated files in output/:"
+            if test -d ./output; then
+              find ./output -maxdepth 2 -type f | sort
+            else
+              echo "::error::output/ directory does not exist"
+            fi
             exit 1
           fi
 
@@ -105,4 +109,8 @@ jobs:
         with:
           name: pipeline-output
           path: output/
-          retention-days: 7
+          retention-days: 1
+
+  run-CI-tests:
+    needs: pipeline-smoke
+    uses: ./.github/workflows/can-attack-sim.yml
