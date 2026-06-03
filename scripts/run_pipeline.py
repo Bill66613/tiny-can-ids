@@ -226,7 +226,7 @@ def load_data(args):
 # ------------------------------------------------------------------
 def preprocess_features(args, raw_df, window_size, is_dos=False, is_rpm=False):
     from can_ids.data import preprocess_can_data
-    from can_ids.features import build_feature_matrix, build_dos_feature_matrix, build_dos_tnn_feature_matrix, build_rpm_dt_feature_matrix
+    from can_ids.features import build_feature_matrix, build_dos_feature_matrix, build_dos_tnn_feature_matrix, build_rpm_dt_feature_matrix, build_rpm_tnn_feature_matrix
 
     df = preprocess_can_data(raw_df)
     logger.info(
@@ -243,7 +243,10 @@ def preprocess_features(args, raw_df, window_size, is_dos=False, is_rpm=False):
         else:
             X, y = build_dos_tnn_feature_matrix(df, window_size=window_size)
     elif is_rpm:
-        X, y = build_rpm_dt_feature_matrix(df, window_size=window_size)
+        if args.export_model == "dt":
+            X, y = build_rpm_dt_feature_matrix(df, window_size=window_size)
+        elif args.export_model == "tnn":
+            X, y = build_rpm_tnn_feature_matrix(df, window_size=window_size)
     else:
         X, y = build_feature_matrix(df, window_size=window_size)
 
@@ -393,7 +396,7 @@ def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output
 # ------------------------------------------------------------------
 # 9. C/C++ export
 # ------------------------------------------------------------------
-def c_export(args, models, y_test, output_dir, is_dos=False, is_rpm=False):
+def c_export(args, models, y_test, scaler, output_dir, is_dos=False, is_rpm=False):
     from can_ids.deploy import export_model_to_c, export_dos_model_to_c, export_rpm_model_to_c
 
     export_targets = _resolve_export_targets(args.export_model, models, y_test)
@@ -410,7 +413,8 @@ def c_export(args, models, y_test, output_dir, is_dos=False, is_rpm=False):
                 model_name="dos_ids",
                 window_size=args.window_size,
                 n_features=model_obj.input_dim if hasattr(
-                    model_obj, 'input_dim') else 8
+                    model_obj, 'input_dim') else 8,
+                scaler=scaler
             )
         elif is_rpm:
             header, source = export_rpm_model_to_c(
@@ -420,7 +424,8 @@ def c_export(args, models, y_test, output_dir, is_dos=False, is_rpm=False):
                 model_name="rpm_ids",
                 window_size=args.window_size,
                 n_features=model_obj.input_dim if hasattr(
-                    model_obj, 'input_dim') else 6
+                    model_obj, 'input_dim') else 6,
+                scaler=scaler
             )
         else:
             header, source = export_model_to_c(
@@ -466,7 +471,7 @@ def main() -> None:
     quantization(models)
     tflite_export(args, models, X_train_s, X_test_s, y_test,
                   class_names, output_dir, is_dos=is_dos, is_rpm=is_rpm)
-    c_export(args, models, y_test, output_dir, is_dos=is_dos, is_rpm=is_rpm)
+    c_export(args, models, y_test, scaler, output_dir, is_dos=is_dos, is_rpm=is_rpm)
 
     if is_dos:
          _export_dos_metadata(args, models, y_test, scaler, output_dir, n_features)
@@ -708,11 +713,13 @@ def _export_rpm_metadata(args, models, y_test, scaler, output_dir, n_features):
             model_info["parameters"]["requires_scaling"] = True
             model_info["parameters"]["scaler_file"] = "rpm_ids_tnn_scaler.h"
             model_info["feature_names"] = [
-                "avg_dt", "min_dt", "message_rate", 
-                "max_freq", "entropy", "max_consecutive"
+                "mean_inter_arrival_time", "std_inter_arrival_time", "min_inter_arrival_time",
+                "max_inter_arrival_time", "message_rate", "dominant_id_frequency",
+                "id_entropy", "timing_cv", "mean_hamming_weight",
+                "data_change_rate", "unique_id_ratio", "skewness_inter_arrival_time"
             ]
             model_info["api_spec"] = {
-                "public_api": "void rpm_ids_tnn_predict(const float *input, int n_input, int *result);",
+                "public_api": "void rpm_ids_tnn_process_window(const CAN_Frame_t *window, int *result);",
                 "output_mapping": "*result = 0 (Normal) | 1 (RPM Attack)",
                 "artifacts_generated": ["rpm_ids_tnn_weights.h", "rpm_ids_tnn_inference.c", "rpm_ids_tnn_model.tflite"]
             }

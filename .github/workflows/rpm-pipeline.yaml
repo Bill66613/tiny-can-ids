@@ -33,6 +33,7 @@ jobs:
         run: |
           echo "Running pipeline to generate models..."
           python -m scripts.run_pipeline --dataset dataset/RPM_dataset.csv --export-model dt --window-size 50
+          python -m scripts.run_pipeline --dataset dataset/RPM_dataset.csv --export-model tnn --window-size 50 --tflite
 
       - name: Upload Generated C Models
         uses: actions/upload-artifact@v6

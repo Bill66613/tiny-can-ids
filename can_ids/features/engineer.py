@@ -535,3 +535,85 @@ def build_rpm_dt_feature_matrix(
         X.shape, y.sum(), n_windows, _DOS_ATTACK_RATIO_THRESHOLD * 100,
     )
     return X, y
+
+
+def build_rpm_tnn_feature_matrix(
+    df: pd.DataFrame,
+    window_size: int = 50,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build an extended 12-feature matrix for RPM Spoofing detection using TNN.
+
+    Features:
+      0: Mean Δt              4: Message Rate             8: Mean Hamming Weight
+      1: Std Δt               5: Dominant ID Frequency    9: Data Change Rate
+      2: Min Δt               6: Shannon ID Entropy      10: Unique ID Ratio
+      3: Max Δt               7: Timing CV (std/mean)    11: Skewness Δt
+
+    Window label = 1 (attack) only if >= 30% of frames are attack.
+    """
+    df = _clean_dos_dataframe(df)
+
+    timestamps = df["Timestamp"].to_numpy(dtype=np.float64)
+    ids = df["ID"].to_numpy()
+    labels = df["label"].to_numpy()
+
+    payload_cols = [f"Data{i}" for i in range(8)]
+    existing_cols = [c for c in payload_cols if c in df.columns]
+    payload = np.zeros((len(df), 8), dtype=np.uint8)
+    if existing_cols:
+        payload[:, :len(existing_cols)] = df[existing_cols].to_numpy(dtype=np.uint8)
+
+    n = len(df)
+    n_windows = max(1, n // window_size)
+
+    X = np.zeros((n_windows, 12), dtype=np.float32)
+    y = np.zeros(n_windows, dtype=np.int32)
+
+    for w in range(n_windows):
+        start = w * window_size
+        end = (w + 1) * window_size
+
+        win_ts = timestamps[start:end]
+        win_ids = ids[start:end]
+        win_labels = labels[start:end]
+        win_payload = payload[start:end]
+
+        if len(win_ts) > 1:
+            dt = np.diff(win_ts)
+            mean_dt = dt.mean()
+            std_dt = dt.std()
+            X[w, 0] = mean_dt
+            X[w, 1] = std_dt
+            X[w, 2] = dt.min()
+            X[w, 3] = dt.max()
+
+            time_span = win_ts[-1] - win_ts[0]
+            X[w, 4] = len(win_ts) / max(time_span, 1e-6)
+
+            X[w, 7] = std_dt / max(mean_dt, 1e-12)
+
+            if std_dt > 1e-6:
+                X[w, 11] = np.mean(((dt - mean_dt) / std_dt) ** 3)
+
+        if len(win_ids) > 0:
+            unique_ids, counts = np.unique(win_ids, return_counts=True)
+            probs = counts / len(win_ids)
+
+            X[w, 5] = probs.max()
+            X[w, 6] = float(-np.sum(probs * np.log2(probs + 1e-12)))
+            X[w, 10] = len(unique_ids) / window_size
+
+        if len(win_payload) > 0:
+            X[w, 8] = np.mean(np.unpackbits(win_payload, axis=1).sum(axis=1))
+            if len(win_payload) > 1:
+                changes = np.any(np.diff(win_payload, axis=0) != 0, axis=1)
+                X[w, 9] = np.sum(changes) / len(changes)
+
+        attack_ratio = win_labels.sum() / window_size
+        y[w] = int(attack_ratio >= _DOS_ATTACK_RATIO_THRESHOLD)
+
+    logger.info(
+        "RPM TNN feature matrix: %s, attack windows: %d / %d (threshold=%.0f%%)",
+        X.shape, y.sum(), n_windows, _DOS_ATTACK_RATIO_THRESHOLD * 100,
+    )
+    return X, y
