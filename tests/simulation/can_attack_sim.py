@@ -119,6 +119,107 @@ def _send_frames(bus: can.Bus, frames: list[can.Message], interval: float,
     print(f"\n  Done — {sent} frames sent.")
     return sent
 
+def _parse_can_csv(path, filter_flag=None) -> list[tuple[float, can.Message]]:
+    """
+    Parse a CAN CSV file and return a list of (timestamp, can.Message).
+    If filter_flag is set, only include rows where flag != filter_flag.
+    """
+    frames = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            parts = line.strip().split(",")
+            if len(parts) < 5 or parts[0].lower() == "timestamp":
+                continue
+            ts = parts[0]
+            can_id_str = parts[1]
+            flag = parts[-1].strip()
+            if filter_flag is not None and flag == filter_flag:
+                continue
+            try:
+                ts_f = float(ts)
+                if "e" in can_id_str.lower() or "+" in can_id_str:
+                    arb_id = int(float(can_id_str))
+                else:
+                    arb_id = int(can_id_str, 16)
+                data_fields = parts[3:-1]
+                data = []
+                for d in data_fields[:8]:
+                    try:
+                        data.append(int(d, 16) if d else 0)
+                    except ValueError:
+                        try:
+                            data.append(int(d))
+                        except ValueError:
+                            data.append(0)
+                data = (data + [0]*8)[:8]
+                frame = can.Message(arbitration_id=arb_id, data=data, is_extended_id=False)
+                frames.append((ts_f, frame))
+            except Exception:
+                continue
+    return frames
+
+
+def replay_can_frames(bus, frames, stop_event=None,
+                      use_timing=True, result_container=None) -> int:
+    if not frames:
+        print("No frames found in file.")
+        return
+    sent = 0
+    for i, (ts, frame) in enumerate(frames):
+        if stop_event and stop_event.is_set():
+            break
+        bus.send(frame)
+        sent += 1
+        if result_container is not None:
+            result_container[0] = sent
+        if i + 1 < len(frames):
+            delay = frames[i + 1][0] - ts
+            if use_timing and delay > 0:
+                time.sleep(delay)
+            elif not use_timing:
+                time.sleep(0.001)
+    return sent
+
+def generate_and_replay_synthetic_normal_can_frame(bus, count=1000,
+                                                   interval=0.002,
+                                                   stop_event=None, result_container=None) -> int:
+    """Replay synthetic normal CAN traffic (default: 1000 frames, 2ms interval)."""
+    ids = [0x100, 0x200, 0x300, 0x400, 0x500]
+    frames = []
+    sent = 0
+    for i in range(count):
+        arb_id = ids[i % len(ids)]
+        data = [(i + b) % 256 for b in range(8)]
+        frame = can.Message(arbitration_id=arb_id, data=data, is_extended_id=False)
+        frames.append(frame)
+    for frame in frames:
+        if stop_event and stop_event.is_set():
+            break
+        bus.send(frame)
+        if result_container is not None:
+            result_container[0] = sent
+        sent += 1
+        if interval > 0:
+            time.sleep(interval)
+    return sent
+
+def start_normal_replay_thread(bus, prompt="  Path to normal CAN CSV (leave blank to use synthetic normal traffic): ") -> tuple[threading.Thread, threading.Event, list[int]]:
+    normal_path = input(prompt).strip()
+    stop_event = threading.Event()
+    result_container: list[int] = [0]
+    if normal_path:
+        if not Path(normal_path).exists():
+            print(f"  [WARNING] File not found: {normal_path}. Using synthetic normal traffic.")
+            t = threading.Thread(target=generate_and_replay_synthetic_normal_can_frame, args=(bus, 1000, 0.002, stop_event, result_container))
+        else:
+            frames = _parse_can_csv(normal_path)
+            t = threading.Thread(target=replay_can_frames, args=(bus, frames, stop_event, True, result_container))
+    else:
+        print(f" Using synthetic normal traffic.")
+        t = threading.Thread(target=generate_and_replay_synthetic_normal_can_frame, args=(bus, 1000, 0.002, stop_event, result_container))
+    t.start()
+    return t, stop_event, result_container
+
 
 def attack_dos(bus: can.Bus) -> None:
     """DoS attack: flood ID 0x0000, all-zero payload, max rate."""
@@ -127,9 +228,19 @@ def attack_dos(bus: can.Bus) -> None:
     print("  Interval: ~0.0005 s (matching dataset timing)\n")
     count_str = input("  Number of frames to send (0 = infinite, default 5000): ").strip()
     count = int(count_str) if count_str else 5000
+
+    # Start normal replay in background to simulate realistic bus load during DoS attack
+    t, stop_event, result_container = start_normal_replay_thread(bus)
+
+    # Send DoS frames
     frame = can.Message(arbitration_id=0x0000, data=[0]*8, is_extended_id=False)
     _send_frames(bus, [frame], 0.0005, count, "DoS")
 
+    # Stop normal replay and wait for thread to finish
+    stop_event.set()
+    t.join()
+    sent = result_container[0]
+    print(f"\n  Normal Replay Done — {sent} frames sent.")
 
 def attack_fuzzy(bus: can.Bus) -> None:
     """Fuzzy attack: random IDs (0x000–0x7FF), random payloads."""
@@ -138,6 +249,10 @@ def attack_fuzzy(bus: can.Bus) -> None:
     print("  Interval: ~0.005 s (varied)\n")
     count_str = input("  Number of frames to send (0 = infinite, default 2000): ").strip()
     count = int(count_str) if count_str else 2000
+
+    # Start normal replay in background to simulate realistic bus load during Fuzzy attack
+    t, stop_event, result_container = start_normal_replay_thread(bus)
+
     # Pre-generate a batch of random frames
     batch_size = min(count if count > 0 else 10000, 10000)
     frames = []
@@ -147,6 +262,11 @@ def attack_fuzzy(bus: can.Bus) -> None:
         frames.append(can.Message(arbitration_id=arb_id, data=data, is_extended_id=False))
     _send_frames(bus, frames, 0.005, count, "Fuzzy")
 
+    # Stop normal replay and wait for thread to finish
+    stop_event.set()
+    t.join()
+    sent = result_container[0]
+    print(f"\n  Normal Replay Done — {sent} frames sent.")
 
 def attack_gear(bus: can.Bus) -> None:
     """Gear spoofing: inject ID 0x043F with crafted gear payload."""
@@ -155,6 +275,11 @@ def attack_gear(bus: can.Bus) -> None:
     print("  Interval: ~0.001 s\n")
     count_str = input("  Number of frames to send (0 = infinite, default 3000): ").strip()
     count = int(count_str) if count_str else 3000
+
+    # Start normal replay in background to simulate realistic bus load during Gear spoofing attack
+    t, stop_event, result_container = start_normal_replay_thread(bus)
+
+    # Send Gear spoofing frames
     frame = can.Message(
         arbitration_id=0x043F,
         data=[0x01, 0x45, 0x60, 0xFF, 0x6B, 0x00, 0x00, 0x00],
@@ -162,6 +287,11 @@ def attack_gear(bus: can.Bus) -> None:
     )
     _send_frames(bus, [frame], 0.001, count, "Gear")
 
+    # Stop normal replay and wait for thread to finish
+    stop_event.set()
+    t.join()
+    sent = result_container[0]
+    print(f"\n  Normal Replay Done — {sent} frames sent.")
 
 def attack_rpm(bus: can.Bus) -> None:
     """RPM spoofing: inject ID 0x0316 with crafted RPM payload."""
@@ -170,6 +300,11 @@ def attack_rpm(bus: can.Bus) -> None:
     print("  Interval: ~0.001 s\n")
     count_str = input("  Number of frames to send (0 = infinite, default 3000): ").strip()
     count = int(count_str) if count_str else 3000
+
+    # Start normal replay in background to simulate realistic bus load during RPM spoofing attack
+    t, stop_event, result_container = start_normal_replay_thread(bus)
+
+    # Send RPM spoofing frames
     frame = can.Message(
         arbitration_id=0x0316,
         data=[0x45, 0x29, 0x24, 0xFF, 0x29, 0x24, 0x00, 0xFF],
@@ -177,6 +312,11 @@ def attack_rpm(bus: can.Bus) -> None:
     )
     _send_frames(bus, [frame], 0.001, count, "RPM")
 
+    # Stop normal replay and wait for thread to finish
+    stop_event.set()
+    t.join()
+    sent = result_container[0]
+    print(f"\n  Normal Replay Done — {sent} frames sent.")
 
 # ---------------------------------------------------------------------------
 # Manual mode
@@ -248,73 +388,28 @@ def manual_csv_load(bus: can.Bus) -> None:
     print(f"  Send {type} frames \n")
 
     # Parse CSV
-    frames: list[tuple[float, can.Message]] = []
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            parts = line.strip().split(",")
-            if len(parts) < 5:
-                continue
-            # Skip header if present
-            if parts[0].lower() == "timestamp":
-                continue
-            ts = parts[0]
-            can_id_str = parts[1]
-            flag = parts[-1].strip()
-
-            if not send_all and flag == "R":
-                continue
-
-            try:
-                ts_f = float(ts)
-            except ValueError:
-                continue
-            try:
-                if "e" in can_id_str.lower() or "+" in can_id_str:
-                    arb_id = int(float(can_id_str))
-                else:
-                    arb_id = int(can_id_str, 16)
-            except ValueError:
-                continue
-
-            data_fields = parts[3:-1]
-            data = []
-            for d in data_fields[:8]:
-                try:
-                    data.append(int(d, 16) if d else 0)
-                except ValueError:
-                    try:
-                        data.append(int(d))
-                    except ValueError:
-                        data.append(0)
-            data = (data + [0]*8)[:8]
-
-            frame = can.Message(arbitration_id=arb_id, data=data, is_extended_id=False)
-            frames.append((ts_f, frame))
-
-    if not frames:
-        print("  No frames matched filter criteria.")
-        return
+    frames = _parse_can_csv(path, filter_flag="R" if not send_all else None)
 
     print(f"\n  Loaded {len(frames)} frames from {path.name}")
+    if not frames:
+        print("  No frames to send after filtering.")
+        return
     print(f"  ID range: 0x{min(f[1].arbitration_id for f in frames):03X} - "
           f"0x{max(f[1].arbitration_id for f in frames):03X}")
     print(f"  Press Ctrl+C to stop\n")
-
-    sent = 0
+    stop_event = threading.Event()
+    result_container: list[int] = [0]
+    t = threading.Thread(target=replay_can_frames, args=(bus, frames, stop_event, use_timing, result_container))
+    t.start()
     try:
-        for i, (ts, frame) in enumerate(frames):
-            bus.send(frame)
-            sent += 1
-            if sent % 500 == 0:
-                print(f"  [{sent}/{len(frames)} frames sent]", end="\r")
-            if use_timing and i + 1 < len(frames):
-                delay = frames[i + 1][0] - ts
-                if 0 < delay < 1.0:
-                    time.sleep(delay)
-            elif not use_timing:
-                time.sleep(0.001)
+        while t.is_alive():
+            t.join(timeout=0.1)
     except KeyboardInterrupt:
-        pass
+        print("\n  [Replay interrupted]")
+        stop_event.set()
+        t.join()
+    # Always join the thread before reading sent
+    sent = result_container[0]
     print(f"\n  Done — {sent} frames sent.")
 
 

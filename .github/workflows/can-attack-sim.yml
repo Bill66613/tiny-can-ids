@@ -84,7 +84,59 @@ jobs:
           echo "$BIN --help"
           "$BIN" --help
 
-      - name: Test — DoS attack (100 frames)
+      - name: Create normal CAN CSV if not exist
+        run: |
+          FILE=tests/simulation/normal.csv
+          if [ -f $FILE ]; then
+            echo "$FILE already exists, skipping creation."
+          else
+            echo "Creating $FILE with sample normal CAN traffic..."
+            cat > $FILE << 'EOF'
+          1478198377.185137,0100,8,11,22,33,44,55,66,77,88,R
+          1478198377.185629,0200,8,AA,BB,CC,DD,EE,FF,00,11,R
+          1478198377.186119,0300,8,01,02,03,04,05,06,07,08,R
+          1478198377.186612,0400,8,10,20,30,40,50,60,70,80,R
+          EOF
+            echo "Created $FILE"
+            cat $FILE
+          fi
+
+      - name: Test — DoS attack (100 frames) (default normal can traffic)
+        run: |
+          BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
+          attack_type="dos"
+          log_dir="/tmp/can-logs/${attack_type}"
+          models=(dt tnn lr)
+          mkdir -p "$log_dir"
+
+          start_can_test_app() {
+            local model="$1"
+            echo "=== --attack-type $attack_type --model ${model} --interface vcan0 --timeout 5 ==="
+            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 -v > "$log_dir/can_test_app_${model}.log" 2>&1 &
+            echo $! > "$log_dir/can_test_app_${model}.pid"
+          }
+
+          stop_can_test_app() {
+            local model="$1"
+            kill $(cat "$log_dir/can_test_app_${model}.pid") 2>/dev/null || true
+            echo "=== can_test_app log (${model}) ===" && cat "$log_dir/can_test_app_${model}.log"
+          }
+
+          for model in "${models[@]}"; do
+            start_can_test_app "$model"
+          done
+          
+          echo "=== Starting candump DoS Attack ==="
+          candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
+          printf '1\n1\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
+          echo "=== candump: DoS ===" && cat "$log_dir/candump.log"
+          
+          for model in "${models[@]}"; do
+            stop_can_test_app "$model"
+          done
+
+      - name: Test — DoS attack (100 frames) (csv normal can traffic)
         run: |
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           attack_type="dos"
@@ -111,7 +163,7 @@ jobs:
 
           echo "=== Starting candump DoS Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n1\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n1\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: DoS ===" && cat "$log_dir/candump.log"
 
@@ -119,7 +171,7 @@ jobs:
             stop_can_test_app "$model"
           done
 
-      - name: Test — Fuzzy attack (100 frames)
+      - name: Test — Fuzzy attack (100 frames) (default normal can traffic)
         run: |
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           attack_type="fuzzy"
@@ -146,7 +198,7 @@ jobs:
 
           echo "=== Starting candump Fuzzy Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n2\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n2\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: Fuzzy ===" && cat "$log_dir/candump.log"
 
@@ -154,7 +206,77 @@ jobs:
             stop_can_test_app "$model"
           done
 
-      - name: Test — Gear spoofing (100 frames)
+      - name: Test — Fuzzy attack (100 frames) (csv normal can traffic)
+        run: |
+          BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
+          attack_type="fuzzy"
+          log_dir="/tmp/can-logs/${attack_type}"
+          models=(dt tnn lr)
+          mkdir -p "$log_dir"
+
+          start_can_test_app() {
+            local model="$1"
+            echo "=== --attack-type $attack_type --model ${model} --interface vcan0 --timeout 5 ==="
+            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 -v > "$log_dir/can_test_app_${model}.log" 2>&1 &
+            echo $! > "$log_dir/can_test_app_${model}.pid"
+          }
+
+          stop_can_test_app() {
+            local model="$1"
+            kill $(cat "$log_dir/can_test_app_${model}.pid") 2>/dev/null || true
+            echo "=== can_test_app log (${model}) ===" && cat "$log_dir/can_test_app_${model}.log"
+          }
+
+          for model in "${models[@]}"; do
+            start_can_test_app "$model"
+          done
+          
+          echo "=== Starting candump Fuzzy Attack ==="
+          candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
+          printf '1\n2\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
+          echo "=== candump: Fuzzy ===" && cat "$log_dir/candump.log"
+          
+          for model in "${models[@]}"; do
+            stop_can_test_app "$model"
+          done
+
+      - name: Test — Gear spoofing (100 frames) (default normal can traffic)
+        run: |
+          BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
+          attack_type="gear"
+          log_dir="/tmp/can-logs/${attack_type}"
+          models=(dt tnn lr)
+          mkdir -p "$log_dir"
+
+          start_can_test_app() {
+            local model="$1"
+            echo "=== --attack-type $attack_type --model ${model} --interface vcan0 --timeout 5 ==="
+            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 -v > "$log_dir/can_test_app_${model}.log" 2>&1 &
+            echo $! > "$log_dir/can_test_app_${model}.pid"
+          }
+
+          stop_can_test_app() {
+            local model="$1"
+            kill $(cat "$log_dir/can_test_app_${model}.pid") 2>/dev/null || true
+            echo "=== can_test_app log (${model}) ===" && cat "$log_dir/can_test_app_${model}.log"
+          }
+
+          for model in "${models[@]}"; do
+            start_can_test_app "$model"
+          done
+          
+          echo "=== Starting candump Gear Spoofing Attack ==="
+          candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
+          printf '1\n3\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
+          echo "=== candump: Gear ===" && cat "$log_dir/candump.log"
+
+          for model in "${models[@]}"; do
+            stop_can_test_app "$model"
+          done
+
+      - name: Test — Gear spoofing (100 frames) (csv normal can traffic)
         run: |
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           attack_type="gear"
@@ -181,7 +303,7 @@ jobs:
 
           echo "=== Starting candump Gear Spoofing Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n3\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n3\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: Gear ===" && cat "$log_dir/candump.log"
 
@@ -189,7 +311,7 @@ jobs:
             stop_can_test_app "$model"
           done
 
-      - name: Test — RPM spoofing (100 frames)
+      - name: Test — RPM spoofing (100 frames) (default normal can traffic)
         run: |
           BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
           attack_type="rpm"
@@ -216,7 +338,43 @@ jobs:
 
           echo "=== Starting candump RPM Spoofing Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n4\n100\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n4\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
+          echo "=== candump: RPM ===" && cat "$log_dir/candump.log"
+
+          for model in "${models[@]}"; do
+            stop_can_test_app "$model"
+          done
+
+
+      - name: Test — RPM spoofing (100 frames) (csv normal can traffic)
+        run: |
+          BIN=${{ needs.build-inference-app.outputs.SRC_DIR }}/build/native/can_test_app
+          attack_type="rpm"
+          log_dir="/tmp/can-logs/${attack_type}"
+          models=(dt tnn lr)
+          mkdir -p "$log_dir"
+
+          start_can_test_app() {
+            local model="$1"
+            echo "=== --attack-type $attack_type --model ${model} --interface vcan0 --timeout 5 ==="
+            stdbuf -oL -eL "$BIN" --attack-type "$attack_type" --model "$model" --interface vcan0 --timeout 5 -v > "$log_dir/can_test_app_${model}.log" 2>&1 &
+            echo $! > "$log_dir/can_test_app_${model}.pid"
+          }
+
+          stop_can_test_app() {
+            local model="$1"
+            kill $(cat "$log_dir/can_test_app_${model}.pid") 2>/dev/null || true
+            echo "=== can_test_app log (${model}) ===" && cat "$log_dir/can_test_app_${model}.log"
+          }
+
+          for model in "${models[@]}"; do
+            start_can_test_app "$model"
+          done
+
+          echo "=== Starting candump RPM Spoofing Attack ==="
+          candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
+          printf '1\n4\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: RPM ===" && cat "$log_dir/candump.log"
 
