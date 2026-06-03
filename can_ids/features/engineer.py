@@ -543,11 +543,11 @@ def build_rpm_tnn_feature_matrix(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build an extended 12-feature matrix for RPM Spoofing detection using TNN.
 
-    Features:
-      0: Mean Δt              4: Message Rate             8: Mean Hamming Weight
-      1: Std Δt               5: Dominant ID Frequency    9: Data Change Rate
-      2: Min Δt               6: Shannon ID Entropy      10: Unique ID Ratio
-      3: Max Δt               7: Timing CV (std/mean)    11: Skewness Δt
+    Tailored Features for RPM Spoofing:
+      0: Mean Δt              4: Message Rate             8: Data Change Rate
+      1: Std Δt               5: Dominant ID Frequency    9: Max Consecutive ID
+      2: Min Δt               6: Shannon ID Entropy      10: High Priority Ratio
+      3: Max Δt               7: Timing CV (std/mean)    11: Unique ID Ratio
 
     Window label = 1 (attack) only if >= 30% of frames are attack.
     """
@@ -578,6 +578,7 @@ def build_rpm_tnn_feature_matrix(
         win_labels = labels[start:end]
         win_payload = payload[start:end]
 
+        # Timing Features
         if len(win_ts) > 1:
             dt = np.diff(win_ts)
             mean_dt = dt.mean()
@@ -589,25 +590,31 @@ def build_rpm_tnn_feature_matrix(
 
             time_span = win_ts[-1] - win_ts[0]
             X[w, 4] = len(win_ts) / max(time_span, 1e-6)
-
             X[w, 7] = std_dt / max(mean_dt, 1e-12)
 
-            if std_dt > 1e-6:
-                X[w, 11] = np.mean(((dt - mean_dt) / std_dt) ** 3)
-
+        # ID Features
         if len(win_ids) > 0:
             unique_ids, counts = np.unique(win_ids, return_counts=True)
             probs = counts / len(win_ids)
 
             X[w, 5] = probs.max()
             X[w, 6] = float(-np.sum(probs * np.log2(probs + 1e-12)))
-            X[w, 10] = len(unique_ids) / window_size
+            X[w, 10] = np.sum(win_ids < 256) / window_size
+            X[w, 11] = len(unique_ids) / window_size
 
-        if len(win_payload) > 0:
-            X[w, 8] = np.mean(np.unpackbits(win_payload, axis=1).sum(axis=1))
-            if len(win_payload) > 1:
-                changes = np.any(np.diff(win_payload, axis=0) != 0, axis=1)
-                X[w, 9] = np.sum(changes) / len(changes)
+            # Tính max consecutive ID (Core feature cho RPM Spoofing)
+            padded_ids = np.insert(win_ids, 0, -1)
+            padded_ids = np.append(padded_ids, -2)
+            diff_indices = np.where(padded_ids[1:] != padded_ids[:-1])[0]
+            if len(diff_indices) > 1:
+                X[w, 9] = np.max(np.diff(diff_indices))
+            else:
+                X[w, 9] = len(win_ids)
+
+        # Payload Feature
+        if len(win_payload) > 1:
+            changes = np.any(np.diff(win_payload, axis=0) != 0, axis=1)
+            X[w, 8] = np.sum(changes) / len(changes)
 
         attack_ratio = win_labels.sum() / window_size
         y[w] = int(attack_ratio >= _DOS_ATTACK_RATIO_THRESHOLD)

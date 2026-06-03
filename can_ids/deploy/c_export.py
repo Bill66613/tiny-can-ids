@@ -1395,7 +1395,7 @@ def export_rpm_tnn_weights_to_c_header(
     path: str | Path,
     model_name: str = "rpm_ids_tnn",
     window_size: int = 50,   
-    n_features: int = 12,    
+    n_features: int = 11,    
 ) -> Path:
     """Write quantized RPM TNN model weights as a C header file."""
     path = Path(path)
@@ -1473,7 +1473,7 @@ def generate_rpm_tnn_inference_c_code(
     path: str | Path,
     model_name: str = "rpm_ids_tnn",
 ) -> Path:
-    """Generate C inference code for RPM TNN with 12 features extraction."""
+    """Generate C inference code for RPM TNN with exactly matched 12 features."""
     path = Path(path)
     if path.suffix != ".c":
         path = path.with_suffix(".c")
@@ -1500,18 +1500,17 @@ def generate_rpm_tnn_inference_c_code(
         "",
     ]
 
-    # Feature Extract (12 Features) 
+    # Feature Extract C Code
     code_parts.extend([
         "/* --- Feature Extraction API --- */",
         f"static void {model_name}_feature_extract(const CAN_Frame_t *window, float *out_features) {{",
-        "    double sum_dt = 0.0, sum_sq_dt = 0.0, sum_cube_dt = 0.0;",
+        "    double sum_dt = 0.0, sum_sq_dt = 0.0;",
         "    float min_dt = 1e9f, max_dt = -1.0f;",
         "    int id_counts[2048] = {0};",
         "    int high_priority_count = 0;",
-        "    int min_id = 2048, max_id = -1, unique_ids = 0;",
+        "    int unique_ids = 0;",
         "    int payload_changes = 0;",
-        "    uint64_t total_bits = 0;",
-        "    int dominant_id = 0, max_count = 0;",
+        "    int max_consecutive = 1, current_consecutive = 1;",
         "",
         f"    for (int i = 0; i < {model_name.upper()}_WINDOW_SIZE; ++i) {{",
         "        /* 1. Timing & Payload Change Stats */",
@@ -1519,7 +1518,6 @@ def generate_rpm_tnn_inference_c_code(
         "            float dt = (float)(window[i].timestamp - window[i-1].timestamp);",
         "            sum_dt += dt;",
         "            sum_sq_dt += (double)dt * dt;",
-        "            sum_cube_dt += (double)dt * dt * dt;",
         "",
         "            if (dt < min_dt) min_dt = dt;",
         "            if (dt > max_dt) max_dt = dt;",
@@ -1532,6 +1530,14 @@ def generate_rpm_tnn_inference_c_code(
         "                }",
         "            }",
         "            if(changed) payload_changes++;",
+        "",
+        "            /* Calculate consecutive identical IDs */",
+        "            if (window[i].id == window[i-1].id) {",
+        "                current_consecutive++;",
+        "            } else {",
+        "                if (current_consecutive > max_consecutive) max_consecutive = current_consecutive;",
+        "                current_consecutive = 1;",
+        "            }",
         "        }",
         "",
         "        /* 2. ID Stats */",
@@ -1540,19 +1546,8 @@ def generate_rpm_tnn_inference_c_code(
         "        int id = window[i].id & 0x7FF;",
         "        if (id_counts[id] == 0) unique_ids++;",
         "        id_counts[id]++;",
-        "",
-        "        if (id < min_id) min_id = id;",
-        "        if (id > max_id) max_id = id;",
-        "",
-        "        /* 3. Payload Bits (Hamming Weight) */",
-        "        for (int b = 0; b < 8; b++) {",
-        "            uint8_t byte = window[i].data[b];",
-        "            while (byte) {",
-        "                byte &= (byte - 1);",
-        "                total_bits++;",
-        "            }",
-        "        }",
         "    }",
+        "    if (current_consecutive > max_consecutive) max_consecutive = current_consecutive;",
         "",
         "    /* --- Final 12 Features Calculation --- */",
         f"    float n = (float){model_name.upper()}_WINDOW_SIZE;",
@@ -1581,15 +1576,10 @@ def generate_rpm_tnn_inference_c_code(
         "    out_features[5] = max_freq;",
         "    out_features[6] = entropy;",
         "    out_features[7] = (mean_dt > 1e-12f) ? (std_dt / mean_dt) : 0.0f;",
-        "    out_features[8] = (float)total_bits / n;",
-        "    out_features[9] = (float)payload_changes / n_minus_1;",
-        "    out_features[10] = (float)unique_ids / n;",
-        "",
-        "    if (std_dt > 1e-6f) {",
-        "        out_features[11] = ((sum_cube_dt / n_minus_1) - 3.0f * mean_dt * variance_dt - mean_dt * mean_dt * mean_dt) / (std_dt * std_dt * std_dt);",
-        "    } else {",
-        "        out_features[11] = 0.0f;",
-        "    }",
+        "    out_features[8] = (float)payload_changes / n_minus_1;",
+        "    out_features[9] = (float)max_consecutive;",
+        "    out_features[10] = (float)high_priority_count / n;",
+        "    out_features[11] = (float)unique_ids / n;",
         "}",
         ""
     ])
@@ -1630,17 +1620,11 @@ def generate_rpm_tnn_inference_c_code(
         code_parts.append(f"    /* Layer: {layer.name} */")
         code_parts.append(f"    for (int j = 0; j < {out_size}; ++j) {{")
         code_parts.append(f"        float acc = {model_name}_{layer_id}_bias[j]")
-        code_parts.append(
-            f"                    * {model_name.upper()}_{layer_id.upper()}_BIAS_SCALE;"
-        )
+        code_parts.append(f"                    * {model_name.upper()}_{layer_id.upper()}_BIAS_SCALE;")
         code_parts.append(f"        for (int i = 0; i < {in_size}; ++i) {{")
         code_parts.append(f"            acc += {prev_buf}[i]")
-        code_parts.append(
-            f"                  * (float){model_name}_{layer_id}_kernel[i * {out_size} + j]"
-        )
-        code_parts.append(
-            f"                  * {model_name.upper()}_{layer_id.upper()}_KERNEL_SCALE;"
-        )
+        code_parts.append(f"                  * (float){model_name}_{layer_id}_kernel[i * {out_size} + j]")
+        code_parts.append(f"                  * {model_name.upper()}_{layer_id.upper()}_KERNEL_SCALE;")
         code_parts.append(f"        }}")
         if activation is not None:
             code_parts.append(f"        {buf_name}[j] = {activation}(acc);")
@@ -1653,8 +1637,9 @@ def generate_rpm_tnn_inference_c_code(
 
     last_layer = quantizer.quantized_layers[-1]
     n_outputs = last_layer.kernel_q.shape[1]
+    
     if n_outputs == 1:
-        code_parts.append(f"    *result = {prev_buf}[0] >= 0.75f ? 1 : 0;")
+        code_parts.append(f"    *result = {prev_buf}[0] >= 0.5f ? 1 : 0;")
     else:
         code_parts.append(f"    int best_class = 0;")
         code_parts.append(f"    float best_score = {prev_buf}[0];")
@@ -1820,14 +1805,16 @@ def export_scaler_to_c_header(
     # Get the mean and scale values ​​from the StandardScaler object and cast them to C's float format.
     mean_vals = ", ".join([f"{x:.8f}f" for x in scaler.mean_])
     scale_vals = ", ".join([f"{x:.8f}f" for x in scaler.scale_])
+
+    n_features = len(scaler.mean_)
     
     lines = [
         f"/* Auto-generated Scaler Data - Do not edit */",
         f"#ifndef {guard}",
         f"#define {guard}",
         "",
-        f"static const float {model_name}_scaler_mean[12] = {{ {mean_vals} }};",
-        f"static const float {model_name}_scaler_scale[12] = {{ {scale_vals} }};",
+        f"static const float {model_name}_scaler_mean[{n_features}] = {{ {mean_vals} }};",
+        f"static const float {model_name}_scaler_scale[{n_features}] = {{ {scale_vals} }};",
         "",
         f"#endif /* {guard} */"
     ]

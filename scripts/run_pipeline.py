@@ -713,11 +713,12 @@ def _export_rpm_metadata(args, models, y_test, scaler, output_dir, n_features):
             model_info["parameters"]["requires_scaling"] = True
             model_info["parameters"]["scaler_file"] = "rpm_ids_tnn_scaler.h"
             model_info["feature_names"] = [
-                "mean_inter_arrival_time", "std_inter_arrival_time", "min_inter_arrival_time",
-                "max_inter_arrival_time", "message_rate", "dominant_id_frequency",
-                "id_entropy", "timing_cv", "mean_hamming_weight",
-                "data_change_rate", "unique_id_ratio", "skewness_inter_arrival_time"
+                "mean_dt", "std_dt", "min_dt", "max_dt", "message_rate",
+                "dominant_id_frequency", "id_entropy", "timing_cv",
+                "data_change_rate", "max_consecutive", "high_priority_ratio",
+                "unique_id_ratio"
             ]
+            
             model_info["api_spec"] = {
                 "public_api": "void rpm_ids_tnn_process_window(const CAN_Frame_t *window, int *result);",
                 "output_mapping": "*result = 0 (Normal) | 1 (RPM Attack)",
