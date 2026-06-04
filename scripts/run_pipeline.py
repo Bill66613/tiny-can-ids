@@ -33,6 +33,7 @@ Steps:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import joblib
@@ -85,6 +86,8 @@ _DEFAULTS: dict = {
     "tflite": False,
     "export_model": "tnn",
     "mode": "standard",
+    "model_name": "tiny_ids",
+    "sampling_rate": 1,
 }
 
 # TOML key → argparse dest mapping (handles hyphens vs underscores).
@@ -95,6 +98,8 @@ _TOML_KEY_MAP: dict[str, str] = {
     "window-size": "window_size",
     "export-model": "export_model",
     "tflite": "tflite",
+    "model-name": "model_name",
+    "sampling-rate": "sampling_rate",
 }
 
 
@@ -137,6 +142,12 @@ def _parse_args() -> argparse.Namespace:
         help="Sliding window size for feature engineering (default: 50).",
     )
     parser.add_argument(
+        "--sampling-rate",
+        type=int,
+        default=None,
+        help="CAN bus sampling rate in milliseconds (default: 1).",
+    )
+    parser.add_argument(
         "--epochs",
         type=int,
         default=None,
@@ -154,6 +165,12 @@ def _parse_args() -> argparse.Namespace:
         help="Which model(s) to export to C code. "
         "'all' exports all three, 'best' picks the highest-F1 model "
         "(default: tnn).",
+    )
+    parser.add_argument(
+        "--model-name",
+        default=None,
+        help="Prefix used for generated C file names and identifiers "
+        "(default: tiny_ids).",
     )
     cli_args = parser.parse_args()
 
@@ -386,7 +403,11 @@ def tflite_export(args, models, X_train_s, X_test_s, y_test, class_names, output
 # 9. C/C++ export
 # ------------------------------------------------------------------
 def c_export(args, models, y_test, output_dir, is_dos=False):
-    from can_ids.deploy import export_model_to_c, export_dos_model_to_c
+    from can_ids.deploy import (
+        export_dos_model_to_c,
+        export_gear_model_to_c,
+        export_model_to_c,
+    )
 
     export_targets = _resolve_export_targets(args.export_model, models, y_test)
 
@@ -404,11 +425,114 @@ def c_export(args, models, y_test, output_dir, is_dos=False):
                 n_features=model_obj.input_dim if hasattr(
                     model_obj, 'input_dim') else 8
             )
+        elif "gear" in args.model_name.lower() and model_type == "dt":
+            n_features = getattr(model_obj, "n_features_in_", 8)
+            header, source = export_gear_model_to_c(
+                model_obj,
+                output_dir,
+                model_name=args.model_name,
+                window_size=args.window_size,
+                n_features=n_features,
+                sampling_rate_ms=args.sampling_rate,
+            )
         else:
             header, source = export_model_to_c(
-                model_obj, model_type, output_dir, model_name="tiny_ids"
+                model_obj,
+                model_type,
+                output_dir,
+                model_name=("tiny_ids" if is_dos else args.model_name),
             )
         logger.info("  %s → %s, %s", name, header.name, source.name)
+
+
+# ------------------------------------------------------------------
+# 10. Save metadata JSON
+# ------------------------------------------------------------------
+def save_metadata_json(
+    args,
+    models: dict,
+    y_test: np.ndarray,
+    X_test_s: np.ndarray,
+    num_classes: int,
+    class_names: list,
+    output_dir: Path,
+) -> None:
+    """Write a metadata JSON file summarising all trained/exported models."""
+    from can_ids.models.compress import export_decision_tree_structure, ModelQuantizer
+
+    task = (
+        "Binary Classification (Normal vs Attack)"
+        if num_classes == 2
+        else f"Multi-class Classification ({', '.join(class_names)})"
+    )
+
+    models_meta: dict = {}
+
+    for model_type, (name, model_obj, y_pred) in models.items():
+        acc = float(accuracy_score(y_test, y_pred))
+        f1 = float(f1_score(y_test, y_pred, average="weighted"))
+        entry: dict = {
+            "model_name": f"{args.model_name}_{model_type}",
+            "model_type": name,
+            "validation_result": {
+                "accuracy": round(acc, 6),
+                "f1_score_weighted": round(f1, 6),
+            },
+            "parameters": {
+                "window_size": args.window_size,
+                "n_features": int(X_test_s.shape[1]),
+                "n_classes": num_classes,
+            },
+        }
+
+        # Model-type-specific parameters
+        if model_type == "dt":
+            try:
+                edt = export_decision_tree_structure(model_obj)
+                entry["parameters"]["n_nodes"] = edt.n_nodes
+                entry["parameters"]["max_depth"] = edt.max_depth
+                entry["parameters"]["memory_footprint_bytes"] = edt.memory_footprint_bytes()
+            except Exception:
+                pass
+        elif model_type == "tnn":
+            try:
+                q = ModelQuantizer(model=model_obj, bits=8)
+                q.quantize()
+                entry["parameters"]["epochs"] = args.epochs
+                entry["parameters"]["memory_footprint_bytes"] = q.memory_footprint_bytes()
+                entry["parameters"]["requires_scaling"] = True
+            except Exception:
+                pass
+        elif model_type == "lr":
+            try:
+                import numpy as _np
+                coef_bytes = int(model_obj.coef_.size * 1)  # INT8: 1 byte/weight
+                entry["parameters"]["memory_footprint_bytes"] = coef_bytes
+            except Exception:
+                pass
+
+        # Artifacts
+        entry["artifacts"] = [
+            f"{args.model_name}_{model_type}_weights.h",
+            f"{args.model_name}_{model_type}_inference.c",
+        ]
+
+        models_meta[model_type] = entry
+
+    metadata = {
+        "project": "tiny-can-ids",
+        "model_name_prefix": args.model_name,
+        "task": task,
+        "window_size": args.window_size,
+        "n_features": int(X_test_s.shape[1]),
+        "class_names": class_names,
+        "models": models_meta,
+    }
+
+    json_path = output_dir / f"{args.model_name}_metadata.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4)
+    logger.info("Metadata saved to %s", json_path)
 
 
 def main() -> None:
@@ -448,6 +572,8 @@ def main() -> None:
     if is_dos:
         _export_dos_metadata(args, models, y_test, scaler,
                              output_dir, n_features)
+
+    save_metadata_json(args, models, y_test, X_test_s, num_classes, class_names, output_dir)
 
     logger.info("Pipeline complete. Artifacts in: %s", output_dir.resolve())
 

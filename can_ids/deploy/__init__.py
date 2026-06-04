@@ -9,6 +9,9 @@ from .c_export import (
     generate_dt_inference_c_code,
     export_model_to_c,
     export_dos_model_to_c,
+    export_gear_dt_to_c_header,
+    generate_gear_dt_inference_c_code,
+    export_gear_model_to_c,
 )
 
 __all__ = [
@@ -20,4 +23,7 @@ __all__ = [
     "generate_dt_inference_c_code",
     "export_model_to_c",
     "export_dos_model_to_c",
+    "export_gear_dt_to_c_header",
+    "generate_gear_dt_inference_c_code",
+    "export_gear_model_to_c",
 ]
