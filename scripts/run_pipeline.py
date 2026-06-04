@@ -244,6 +244,7 @@ def load_data(args):
 def preprocess_features(args, raw_df, window_size, is_dos=False):
     from can_ids.data import preprocess_can_data
     from can_ids.features import build_feature_matrix, build_dos_feature_matrix, build_dos_tnn_feature_matrix
+    from can_ids.features.engineer import _compute_top_ids
 
     df = preprocess_can_data(raw_df)
     logger.info(
@@ -260,6 +261,8 @@ def preprocess_features(args, raw_df, window_size, is_dos=False):
         else:
             X, y = build_dos_tnn_feature_matrix(df, window_size=window_size)
     else:
+        if "gear" in args.model_name.lower():
+            args.gear_top_ids = _compute_top_ids(df, k=20)
         X, y = build_feature_matrix(df, window_size=window_size)
 
     logger.info("Feature matrix: %s  labels: %s", X.shape, np.bincount(y))
@@ -434,6 +437,7 @@ def c_export(args, models, y_test, output_dir, is_dos=False):
                 window_size=args.window_size,
                 n_features=n_features,
                 sampling_rate_ms=args.sampling_rate,
+                top_ids=getattr(args, "gear_top_ids", None),
             )
         else:
             header, source = export_model_to_c(
