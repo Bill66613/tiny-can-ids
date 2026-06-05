@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, feature/#23-generate-rpm-model]
+    branches: [main, develop, feature/#32-performance-measurement]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
