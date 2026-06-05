@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  generate-models-dos:
-    uses: ./.github/workflows/dos-pipeline.yaml
+  # generate-models-dos:
+  #   uses: ./.github/workflows/dos-pipeline.yaml
 
   # generate-models-fuzzy:
   #   uses: ./.github/workflows/fuzzy-pipeline.yaml
