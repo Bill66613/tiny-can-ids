@@ -1,0 +1,44 @@
+name: TinyML DoS Pipeline
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  generate-and-upload-models:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Download Dataset from Dropbox
+        run: |
+          mkdir -p dataset
+          echo "Downloading gear_dataset.csv..."
+          wget -O dataset/gear_dataset.csv "https://www.dropbox.com/scl/fi/es471c8knn2e5vbq65xp2/gear_dataset.csv?rlkey=3o53d8j0ql44oj9sqhrte8mi2&st=j4pnay2h&dl=0"
+
+      - name: Run gear Pipeline
+        run: |
+          echo "Running pipeline to generate models..."
+          python -m scripts.run_pipeline --dataset dataset/gear_dataset.csv --export-model dt --window-size 50
+          python -m scripts.run_pipeline --dataset dataset/gear_dataset.csv --export-model tnn --window-size 50 --tflite
+
+      - name: Upload Generated C Models
+        uses: actions/upload-artifact@v6
+        with:
+          name: output-c-gear
+          path: output/gear_binary/ 
+          retention-days: 1
+          if-no-files-found: error

@@ -11,8 +11,8 @@ jobs:
   # generate-models-fuzzy:
   #   uses: ./.github/workflows/fuzzy-pipeline.yaml
 
-  # generate-models-gear:
-  #   uses: ./.github/workflows/gear-pipeline.yaml
+  generate-models-gear:
+    uses: ./.github/workflows/gear-pipeline.yaml
 
   # generate-models-rpm:
   #   uses: ./.github/workflows/rpm-pipeline.yaml
