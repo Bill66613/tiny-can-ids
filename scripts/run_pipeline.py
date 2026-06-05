@@ -547,6 +547,15 @@ def main() -> None:
         "dos_only" if is_dos else Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+
+    #definition for Gear dataset ---
+    if args.dataset and "gear_dataset.csv" in args.dataset:
+        is_gear = True
+        output_dir = Path(args.output_dir) / "gear_binary"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Gear dataset detected based on filename.")        
+    else:
+        output_dir = Path(args.output_dir)
     # --- STANDARD PIPELINE ---
     raw_df, num_classes, class_names = load_data(args)
     X, y = preprocess_features(args, raw_df, args.window_size, is_dos=is_dos)
