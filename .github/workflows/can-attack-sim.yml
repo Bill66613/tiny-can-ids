@@ -19,9 +19,9 @@ jobs:
 
   build-inference-app:
     needs: [
-        generate-models-dos,
+        # generate-models-dos,
         # generate-models-fuzzy,
-        # generate-models-gear,
+        generate-models-gear,
         # generate-models-rpm,
       ]
     uses: ./.github/workflows/build-source-c.yaml
