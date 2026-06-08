@@ -1,9 +1,12 @@
+#define _GNU_SOURCE
+#define _POSIX_C_SOURCE 200809L
 #include <getopt.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <time.h>
 
 // ##TAG_1
@@ -20,7 +23,7 @@
 #include <unistd.h>
 #endif
 
-#define APP_VERSION "0.6.1"
+#define APP_VERSION "0.7.0"
 
 #ifndef CAN_FRAME_T_DEFINED
 #define CAN_FRAME_T_DEFINED
@@ -216,6 +219,251 @@ static int dispatch_process_window(
 	return -1;
 }
 
+static int hex_nibble(char c)
+{
+	if (c >= '0' && c <= '9')
+	{
+		return c - '0';
+	}
+	if (c >= 'a' && c <= 'f')
+	{
+		return c - 'a' + 10;
+	}
+	if (c >= 'A' && c <= 'F')
+	{
+		return c - 'A' + 10;
+	}
+	return -1;
+}
+
+static int parse_hex_data(const char *hex, uint8_t *out, int max_len)
+{
+	int len = (int)strlen(hex);
+	if (len <= 0 || (len % 2) != 0)
+	{
+		return -1;
+	}
+
+	int byte_count = len / 2;
+	if (byte_count > max_len)
+	{
+		return -1;
+	}
+
+	for (int i = 0; i < byte_count; i++)
+	{
+		int hi = hex_nibble(hex[i * 2]);
+		int lo = hex_nibble(hex[i * 2 + 1]);
+		if (hi < 0 || lo < 0)
+		{
+			return -1;
+		}
+		out[i] = (uint8_t)((hi << 4) | lo);
+	}
+
+	return byte_count;
+}
+
+static bool is_decimal_string(const char *value);
+static const char *tdr_bus_id_from_interface(const char *interface_name, char *buffer, size_t buffer_size);
+static const char *socket_interface_from_config(const app_config_t *cfg, char *buffer, size_t buffer_size);
+static bool command_exists(const char *command);
+
+/*
+ * Expected tdr_can_dump line:
+ *   CAN event: [1780890533510] 40000000 0000000000000000
+ */
+static bool parse_tdr_can_event_line(const char *line, CAN_Frame_t *sample)
+{
+	unsigned long long timestamp = 0;
+	unsigned int id = 0;
+	char data_hex[64] = {0};
+
+	int matched = sscanf(line, "CAN event: [%llu] %x %63s", &timestamp, &id, data_hex);
+	if (matched != 3)
+	{
+		return false;
+	}
+
+	memset(sample, 0, sizeof(*sample));
+	sample->timestamp = (double)timestamp;
+	sample->id = (uint32_t)id;
+
+	int dlc = parse_hex_data(data_hex, sample->data, (int)sizeof(sample->data));
+	if (dlc < 0)
+	{
+		fprintf(stderr, "WARN: invalid CAN data in line: %s", line);
+		return false;
+	}
+
+	sample->dlc = dlc;
+	return true;
+}
+
+static int listen_for_tdr_can_dump_frames(const app_config_t *cfg)
+{
+	if (cfg->frame_count <= 0 || cfg->frame_count > MAX_WINDOW_FRAMES)
+	{
+		fprintf(stderr, "Error: frame_count must be in range 1..%d.\n", MAX_WINDOW_FRAMES);
+		return -1;
+	}
+
+	char bus_id[32];
+	const char *tdr_bus_id = tdr_bus_id_from_interface(cfg->interface_name, bus_id, sizeof(bus_id));
+
+	char command[256];
+	snprintf(
+		command,
+		sizeof(command),
+		"tdr_can_dump %s 0 0",
+		tdr_bus_id);
+
+	FILE *pipe = popen(command, "r");
+	if (pipe == NULL)
+	{
+		perror("popen(tdr_can_dump)");
+		return -1;
+	}
+
+	CAN_Frame_t window[MAX_WINDOW_FRAMES];
+	int filled = 0;
+	int start_index = 0;
+
+	const int has_deadline = (cfg->timeout_sec > 0);
+	struct timespec deadline = {0, 0};
+	if (has_deadline)
+	{
+		clock_gettime(CLOCK_MONOTONIC, &deadline);
+		deadline.tv_sec += cfg->timeout_sec;
+	}
+
+	char line[512];
+	while (!g_stop_requested && fgets(line, sizeof(line), pipe) != NULL)
+	{
+		if (has_deadline)
+		{
+			struct timespec now;
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			long remaining_ns =
+				(deadline.tv_sec - now.tv_sec) * 1000000000L +
+				(deadline.tv_nsec - now.tv_nsec);
+			if (remaining_ns <= 0)
+			{
+				printf("Timeout reached (%ds). Stopping.\n", cfg->timeout_sec);
+				break;
+			}
+		}
+
+		CAN_Frame_t sample;
+		if (!parse_tdr_can_event_line(line, &sample))
+		{
+			/* Ignore non-frame lines, for example:
+			 *   BUS event: Bus #0 - state = UP
+			 */
+			continue;
+		}
+
+		printf("[TDR_CAN] ts=%.0f id=0x%08X dlc=%d data=",
+			   sample.timestamp,
+			   sample.id,
+			   sample.dlc);
+		for (int j = 0; j < sample.dlc; j++)
+		{
+			printf("%02X", sample.data[j]);
+			if (j + 1 < sample.dlc)
+			{
+				printf(" ");
+			}
+		}
+		printf("\n");
+
+		if (filled < cfg->frame_count)
+		{
+			window[filled] = sample;
+			filled++;
+		}
+		else
+		{
+			window[start_index] = sample;
+			start_index = (start_index + 1) % cfg->frame_count;
+		}
+
+		if (filled == cfg->frame_count)
+		{
+			if (dispatch_process_window(window, start_index, cfg->frame_count, cfg) != 0)
+			{
+				pclose(pipe);
+				return -1;
+			}
+		}
+	}
+
+	int rc = pclose(pipe);
+	if (rc != 0 && !g_stop_requested)
+	{
+		fprintf(stderr, "WARN: tdr_can_dump exited with status=%d.\n", rc);
+	}
+
+	printf("Stop signal received. Exiting TDR CAN dump loop.\n");
+	return 0;
+}
+
+
+static bool is_decimal_string(const char *value)
+{
+	if (value == NULL || *value == '\0')
+	{
+		return false;
+	}
+
+	for (const char *p = value; *p != '\0'; p++)
+	{
+		if (!isdigit((unsigned char)*p))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static const char *tdr_bus_id_from_interface(const char *interface_name, char *buffer, size_t buffer_size)
+{
+	if (interface_name == NULL)
+	{
+		return "0";
+	}
+
+	/* Allow both --interface 0 and --interface can0.
+	 * tdr_can_dump expects bus-id, while SocketCAN expects interface name.
+	 */
+	if (strncmp(interface_name, "can", 3) == 0 && is_decimal_string(interface_name + 3))
+	{
+		snprintf(buffer, buffer_size, "%s", interface_name + 3);
+		return buffer;
+	}
+
+	return interface_name;
+}
+
+static const char *socket_interface_from_config(const app_config_t *cfg, char *buffer, size_t buffer_size)
+{
+	if (cfg->interface_name != NULL && is_decimal_string(cfg->interface_name))
+	{
+		snprintf(buffer, buffer_size, "can%s", cfg->interface_name);
+		return buffer;
+	}
+
+	return cfg->interface_name;
+}
+
+static bool command_exists(const char *command)
+{
+	char check_command[256];
+	snprintf(check_command, sizeof(check_command), "command -v %s >/dev/null 2>&1", command);
+	return system(check_command) == 0;
+}
+
 static int listen_for_can_frames(int fd, const app_config_t *cfg)
 {
 	if (cfg->frame_count <= 0 || cfg->frame_count > MAX_WINDOW_FRAMES)
@@ -355,14 +603,14 @@ static void print_help(const char *prog_name)
 {
 	printf("%s v%s\n", prog_name, APP_VERSION);
 	printf("\n");
-	printf("Usage: %s --attack-type <dos|fuzzy|gear|rpm> --model <dt|tnn|lr> --interface <can0|vcan0|...>\n",
+	printf("Usage: %s --attack-type <dos|fuzzy|gear|rpm> --model <dt|tnn|lr> --interface <can0|0|vcan0|...>\n",
 		   prog_name);
 	printf("\n");
 	printf("Options:\n");
 	printf("  -a, --attack-type   Attack type: dos, fuzzy, gear, rpm\n");
 	printf("  -m, --model         Model (mode): dt, tnn, lr\n");
 	printf("      --mode          Alias of --model\n");
-	printf("  -i, --interface     CAN interface name, example: can0, vcan0\n");
+	printf("  -i, --interface     CAN source. tdr_can_dump uses bus id 0; SocketCAN uses can0/vcan0.\n");
 	printf("  -s, --slide-percent Sliding hop as %% of frame_count, example: 10, 30, 50 (default: 50)\n");
 	printf("  -t, --timeout       Stop after N seconds (<=0 = run forever, default: 0)\n");
 	printf("  -v, --verbose       Print each CAN message in detail\n");
@@ -370,7 +618,7 @@ static void print_help(const char *prog_name)
 	printf("  -h, --help          Show this help message\n");
 	printf("\n");
 	printf("Example:\n");
-	printf("  %s --attack-type dos --model tnn --interface vcan0\n", prog_name);
+	printf("  %s --attack-type dos --model tnn --interface 0\n", prog_name);
 	printf("  %s --attack-type dos --model tnn --interface vcan0 --slide-percent 30\n", prog_name);
 	printf("  Stop listening with Ctrl+C (SIGINT) or kill (SIGTERM).\n");
 }
@@ -610,14 +858,37 @@ int main(int argc, char **argv)
 	signal(SIGINT, handle_stop_signal);
 	signal(SIGTERM, handle_stop_signal);
 
-	int can_fd = open_can_socket(cfg.interface_name);
+	if (command_exists("tdr_can_dump"))
+	{
+		char bus_id[32];
+		const char *tdr_bus_id = tdr_bus_id_from_interface(cfg.interface_name, bus_id, sizeof(bus_id));
+		printf("tdr_can_dump found. Starting TDR CAN dump on bus '%s'. Listening...\n", tdr_bus_id);
+		int listen_rc = listen_for_tdr_can_dump_frames(&cfg);
+		if (listen_rc == 0 || g_stop_requested)
+		{
+			return listen_rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+		}
+
+		fprintf(stderr, "WARN: tdr_can_dump failed. Falling back to SocketCAN.\n");
+	}
+	else
+	{
+		printf("tdr_can_dump not found. Falling back to SocketCAN.\n");
+	}
+
+	char socket_if_name[IFNAMSIZ];
+	const char *socket_interface = socket_interface_from_config(&cfg, socket_if_name, sizeof(socket_if_name));
+	app_config_t socket_cfg = cfg;
+	socket_cfg.interface_name = socket_interface;
+
+	int can_fd = open_can_socket(socket_cfg.interface_name);
 	if (can_fd < 0)
 	{
 		return EXIT_FAILURE;
 	}
 
-	printf("SocketCAN bound on '%s'. Listening...\n", cfg.interface_name);
-	int listen_rc = listen_for_can_frames(can_fd, &cfg);
+	printf("SocketCAN bound on '%s'. Listening...\n", socket_cfg.interface_name);
+	int listen_rc = listen_for_can_frames(can_fd, &socket_cfg);
 	close(can_fd);
 	if (listen_rc != 0)
 	{
