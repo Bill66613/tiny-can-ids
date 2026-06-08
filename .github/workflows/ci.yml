@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, feature/#23-generate-rpm-model]
+    branches: [main, develop, feature/connect_can_data_in_chub]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
