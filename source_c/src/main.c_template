@@ -307,6 +307,11 @@ static int listen_for_tdr_can_dump_frames(const app_config_t *cfg)
 		fprintf(stderr, "Error: frame_count must be in range 1..%d.\n", MAX_WINDOW_FRAMES);
 		return -1;
 	}
+	if (cfg->slide_percent <= 0 || cfg->slide_percent > 100)
+	{
+		fprintf(stderr, "Error: slide_percent must be in range 1..100.\n");
+		return -1;
+	}
 
 	char bus_id[32];
 	const char *tdr_bus_id = tdr_bus_id_from_interface(cfg->interface_name, bus_id, sizeof(bus_id));
@@ -328,6 +333,13 @@ static int listen_for_tdr_can_dump_frames(const app_config_t *cfg)
 	CAN_Frame_t window[MAX_WINDOW_FRAMES];
 	int filled = 0;
 	int start_index = 0;
+	int total_received = 0;
+	int dispatch_step = (cfg->frame_count * cfg->slide_percent) / 100;
+	if (dispatch_step <= 0)
+	{
+		dispatch_step = 1;
+	}
+	int next_dispatch_at = cfg->frame_count;
 
 	const int has_deadline = (cfg->timeout_sec > 0);
 	struct timespec deadline = {0, 0};
@@ -363,19 +375,22 @@ static int listen_for_tdr_can_dump_frames(const app_config_t *cfg)
 			continue;
 		}
 
-		printf("[TDR_CAN] ts=%.0f id=0x%08X dlc=%d data=",
-			   sample.timestamp,
-			   sample.id,
-			   sample.dlc);
-		for (int j = 0; j < sample.dlc; j++)
+		if (cfg->verbose)
 		{
-			printf("%02X", sample.data[j]);
-			if (j + 1 < sample.dlc)
+			printf("[TDR_CAN] ts=%.0f id=0x%08X dlc=%d data=",
+				   sample.timestamp,
+				   sample.id,
+				   sample.dlc);
+			for (int j = 0; j < sample.dlc; j++)
 			{
-				printf(" ");
+				printf("%02X", sample.data[j]);
+				if (j + 1 < sample.dlc)
+				{
+					printf(" ");
+				}
 			}
+			printf("\n");
 		}
-		printf("\n");
 
 		if (filled < cfg->frame_count)
 		{
@@ -388,13 +403,16 @@ static int listen_for_tdr_can_dump_frames(const app_config_t *cfg)
 			start_index = (start_index + 1) % cfg->frame_count;
 		}
 
-		if (filled == cfg->frame_count)
+		total_received++;
+
+		if (filled == cfg->frame_count && total_received >= next_dispatch_at)
 		{
 			if (dispatch_process_window(window, start_index, cfg->frame_count, cfg) != 0)
 			{
 				pclose(pipe);
 				return -1;
 			}
+			next_dispatch_at += dispatch_step;
 		}
 	}
 
