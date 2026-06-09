@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, feature/connect_can_data_in_chub]
+    branches: [main, develop]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
