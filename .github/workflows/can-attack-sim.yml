@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  # generate-models-dos:
-  #   uses: ./.github/workflows/dos-pipeline.yaml
+  generate-models-dos:
+    uses: ./.github/workflows/dos-pipeline.yaml
 
   # generate-models-fuzzy:
   #   uses: ./.github/workflows/fuzzy-pipeline.yaml
@@ -14,15 +14,15 @@ jobs:
   generate-models-gear:
     uses: ./.github/workflows/gear-pipeline.yaml
 
-  # generate-models-rpm:
-  #   uses: ./.github/workflows/rpm-pipeline.yaml
+  generate-models-rpm:
+    uses: ./.github/workflows/rpm-pipeline.yaml
 
   build-inference-app:
     needs: [
-        # generate-models-dos,
+        generate-models-dos,
         # generate-models-fuzzy,
         generate-models-gear,
-        # generate-models-rpm,
+        generate-models-rpm,
       ]
     uses: ./.github/workflows/build-source-c.yaml
 
