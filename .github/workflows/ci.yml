@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop,huynh]
+    branches: [main, develop, hien/#22-support-gear-model]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
