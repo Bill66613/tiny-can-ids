@@ -23,7 +23,7 @@
 #include <unistd.h>
 #endif
 
-#define APP_VERSION "0.7.0"
+#define APP_VERSION "0.8.0"
 
 #ifndef CAN_FRAME_T_DEFINED
 #define CAN_FRAME_T_DEFINED
@@ -96,6 +96,14 @@ static const int g_handler_table_size =
 	(int)(sizeof(g_handler_table) / sizeof(g_handler_table[0]));
 
 #define DEFAULT_WINDOW_SIZE 10
+
+// Global tracking variables for statistical summary
+static int g_total_windows_processed = 0;
+static int g_total_attack_windows = 0;
+static int g_first_attack_window = -1;
+static int g_last_attack_window = -1;
+static double g_first_attack_timestamp = -1.0;
+static double g_last_attack_timestamp = -1.0;
 
 #ifdef __linux__
 #define MAX_WINDOW_FRAMES 2048
@@ -176,6 +184,7 @@ static int dispatch_process_window(
 	int frame_count,
 	const app_config_t *cfg)
 {
+	g_total_windows_processed++;
 	CAN_Frame_t ordered_window[MAX_WINDOW_FRAMES];
 	for (int i = 0; i < frame_count; i++)
 	{
@@ -204,9 +213,22 @@ static int dispatch_process_window(
 		int pred = -1;
 		entry->fn(ordered_window, &pred);
 		printf("[PRED] %s prediction=%d\n", entry->label, pred);
+		fflush(stdout);
+
 		if (pred == 1)
 		{
+			g_total_attack_windows++;
+			g_last_attack_window = g_total_windows_processed;
+			g_last_attack_timestamp = ordered_window[frame_count - 1].timestamp;
+
+			if (g_first_attack_window == -1)
+			{
+				g_first_attack_window = g_total_windows_processed;
+				g_first_attack_timestamp = ordered_window[0].timestamp;
+			}
+
 			printf("[ALERT] %s attack_detected prediction=%d\n", entry->label, pred);
+			fflush(stdout);
 		}
 		return 0;
 	}
@@ -374,6 +396,21 @@ static int listen_for_tdr_can_dump_frames(const app_config_t *cfg)
 			 *   BUS event: Bus #0 - state = UP
 			 */
 			continue;
+		}
+
+		// --- Dummy Frame Filter for CHUB ---
+		if ((sample.id & CAN_SFF_MASK) == 0x400 && sample.dlc == 8)
+		{
+			bool is_dummy = true;
+			for (int i = 0; i < 8; i++)
+			{
+				if (sample.data[i] != 0x00)
+				{
+					is_dummy = false;
+					break;
+				}
+			}
+			if (is_dummy) continue; 
 		}
 
 		if (cfg->verbose)
@@ -574,6 +611,21 @@ static int listen_for_can_frames(int fd, const app_config_t *cfg)
 		sample.dlc = frame.can_dlc;
 		memset(sample.data, 0, sizeof(sample.data));
 		memcpy(sample.data, frame.data, (size_t)frame.can_dlc);
+
+		// --- Dummy Frame Filter for SocketCAN ---
+		if ((sample.id & CAN_SFF_MASK) == 0x400 && sample.dlc == 8)
+		{
+			bool is_dummy = true;
+			for (int i = 0; i < 8; i++)
+			{
+				if (sample.data[i] != 0x00)
+				{
+					is_dummy = false;
+					break;
+				}
+			}
+			if (is_dummy) continue; 
+		}
 
 		if (cfg->verbose)
 		{
@@ -885,7 +937,7 @@ int main(int argc, char **argv)
 		int listen_rc = listen_for_tdr_can_dump_frames(&cfg);
 		if (listen_rc == 0 || g_stop_requested)
 		{
-			return listen_rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+			goto print_summary;
 		}
 
 		fprintf(stderr, "WARN: tdr_can_dump failed. Falling back to SocketCAN.\n");
@@ -907,12 +959,30 @@ int main(int argc, char **argv)
 	}
 
 	printf("SocketCAN bound on '%s'. Listening...\n", socket_cfg.interface_name);
-	int listen_rc = listen_for_can_frames(can_fd, &socket_cfg);
+	listen_for_can_frames(can_fd, &socket_cfg);
 	close(can_fd);
-	if (listen_rc != 0)
+
+print_summary:
+	// --- STATISTICAL SUMMARY REPORT ---
+	printf("\n======================================================\n");
+	printf(" DETECTION SUMMARY REPORT\n");
+	printf("======================================================\n");
+	printf(" Total Windows Processed : %d\n", g_total_windows_processed);
+	printf(" Total Attack Windows    : %d\n", g_total_attack_windows);
+	if (g_total_attack_windows > 0)
 	{
-		return EXIT_FAILURE;
+		printf(" First Attack Window Index: %d\n", g_first_attack_window);
+		printf(" Last Attack Window Index : %d\n", g_last_attack_window);
+		printf(" First Attack Timestamp   : %.6f\n", g_first_attack_timestamp);
+		printf(" Last Attack Timestamp    : %.6f\n", g_last_attack_timestamp);
+		printf(" Active Attack Duration   : %.6f seconds\n", (g_last_attack_timestamp - g_first_attack_timestamp));
 	}
+	else
+	{
+		printf(" No attacks were detected during this session.\n");
+	}
+	printf("======================================================\n");
+
 #else
 	fprintf(stderr, "Error: this app is supported only on Linux (SocketCAN).\n");
 	return EXIT_FAILURE;
