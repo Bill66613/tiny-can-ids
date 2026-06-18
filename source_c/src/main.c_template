@@ -629,7 +629,7 @@ static int listen_for_can_frames(int fd, const app_config_t *cfg)
 
 		if (cfg->verbose)
 		{
-			printf("[CAN] ts=%.0f id=0x%03X dlc=%d data=", sample.timestamp, sample.id & CAN_SFF_MASK, sample.dlc);
+			printf("[CAN] ts=%.6f id=0x%03X dlc=%d data=", sample.timestamp, sample.id & CAN_SFF_MASK, sample.dlc);
 			for (int j = 0; j < sample.dlc; j++)
 			{
 				printf("%02X", sample.data[j]);
