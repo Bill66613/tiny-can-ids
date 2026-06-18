@@ -100,10 +100,14 @@ static const int g_handler_table_size =
 // Global tracking variables for statistical summary
 static int g_total_windows_processed = 0;
 static int g_total_attack_windows = 0;
-static int g_first_attack_window = -1;
-static int g_last_attack_window = -1;
-static double g_first_attack_timestamp = -1.0;
-static double g_last_attack_timestamp = -1.0;
+
+// Session tracking variables
+static bool g_in_attack_state = false;
+static int g_attack_session_count = 0;
+static int g_current_session_start_window = -1;
+static double g_current_session_start_ts = -1.0;
+static double g_last_seen_attack_ts = -1.0;
+static int g_last_seen_attack_window = -1;
 
 #ifdef __linux__
 #define MAX_WINDOW_FRAMES 2048
@@ -215,20 +219,43 @@ static int dispatch_process_window(
 		printf("[PRED] %s prediction=%d\n", entry->label, pred);
 		fflush(stdout);
 
+		// --- STATE MACHINE LOGIC FOR ATTACK SESSIONS ---
 		if (pred == 1)
 		{
 			g_total_attack_windows++;
-			g_last_attack_window = g_total_windows_processed;
-			g_last_attack_timestamp = ordered_window[frame_count - 1].timestamp;
+			g_last_seen_attack_ts = ordered_window[frame_count - 1].timestamp;
+			g_last_seen_attack_window = g_total_windows_processed;
 
-			if (g_first_attack_window == -1)
+			if (!g_in_attack_state)
 			{
-				g_first_attack_window = g_total_windows_processed;
-				g_first_attack_timestamp = ordered_window[0].timestamp;
+				// Transition: Normal -> Attack (Start of a new session)
+				g_in_attack_state = true;
+				g_attack_session_count++;
+				g_current_session_start_window = g_total_windows_processed;
+				g_current_session_start_ts = ordered_window[0].timestamp;
+
+				printf("\n>>> [SESSION_START] Attack Session #%d Started at Window %d\n", 
+				       g_attack_session_count, g_current_session_start_window);
 			}
 
 			printf("[ALERT] %s attack_detected prediction=%d\n", entry->label, pred);
 			fflush(stdout);
+		}
+		else 
+		{
+			if (g_in_attack_state)
+			{
+				// Transition: Attack -> Normal (End of the current session)
+				g_in_attack_state = false;
+				double session_duration = g_last_seen_attack_ts - g_current_session_start_ts;
+				
+				printf("\n<<< [SESSION_END] Attack Session #%d Ended at Window %d\n", 
+				       g_attack_session_count, g_total_windows_processed);
+				printf("    Session Start TS : %.6f\n", g_current_session_start_ts);
+				printf("    Session End TS   : %.6f\n", g_last_seen_attack_ts);
+				printf("    Session Duration : %.6f seconds\n\n", session_duration);
+				fflush(stdout);
+			}
 		}
 		return 0;
 	}
@@ -963,21 +990,26 @@ int main(int argc, char **argv)
 	close(can_fd);
 
 print_summary:
+	// If the program stops while an attack is still ongoing, close the session
+	if (g_in_attack_state)
+	{
+		g_in_attack_state = false;
+		double session_duration = g_last_seen_attack_ts - g_current_session_start_ts;
+		printf("\n<<< [SESSION_END] Attack Session #%d Ended Internally (App Stopped)\n", g_attack_session_count);
+		printf("    Session Start TS : %.6f\n", g_current_session_start_ts);
+		printf("    Session End TS   : %.6f\n", g_last_seen_attack_ts);
+		printf("    Session Duration : %.6f seconds\n", session_duration);
+	}
+
 	// --- STATISTICAL SUMMARY REPORT ---
 	printf("\n======================================================\n");
 	printf(" DETECTION SUMMARY REPORT\n");
 	printf("======================================================\n");
 	printf(" Total Windows Processed : %d\n", g_total_windows_processed);
 	printf(" Total Attack Windows    : %d\n", g_total_attack_windows);
-	if (g_total_attack_windows > 0)
-	{
-		printf(" First Attack Window Index: %d\n", g_first_attack_window);
-		printf(" Last Attack Window Index : %d\n", g_last_attack_window);
-		printf(" First Attack Timestamp   : %.6f\n", g_first_attack_timestamp);
-		printf(" Last Attack Timestamp    : %.6f\n", g_last_attack_timestamp);
-		printf(" Active Attack Duration   : %.6f seconds\n", (g_last_attack_timestamp - g_first_attack_timestamp));
-	}
-	else
+	printf(" Total Attack Sessions   : %d\n", g_attack_session_count);
+	
+	if (g_attack_session_count == 0)
 	{
 		printf(" No attacks were detected during this session.\n");
 	}
