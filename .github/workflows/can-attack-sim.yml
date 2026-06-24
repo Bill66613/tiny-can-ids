@@ -128,7 +128,7 @@ jobs:
           
           echo "=== Starting candump DoS Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n1\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n1\n\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: DoS ===" && cat "$log_dir/candump.log"
           
@@ -163,7 +163,7 @@ jobs:
 
           echo "=== Starting candump DoS Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n1\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n1\ntests/simulation/normal.csv\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: DoS ===" && cat "$log_dir/candump.log"
 
@@ -198,7 +198,7 @@ jobs:
 
           echo "=== Starting candump Fuzzy Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n2\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n2\n\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: Fuzzy ===" && cat "$log_dir/candump.log"
 
@@ -233,7 +233,7 @@ jobs:
           
           echo "=== Starting candump Fuzzy Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n2\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n2\ntests/simulation/normal.csv\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: Fuzzy ===" && cat "$log_dir/candump.log"
           
@@ -268,7 +268,7 @@ jobs:
           
           echo "=== Starting candump Gear Spoofing Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n3\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n3\n\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: Gear ===" && cat "$log_dir/candump.log"
 
@@ -303,7 +303,7 @@ jobs:
 
           echo "=== Starting candump Gear Spoofing Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n3\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n3\ntests/simulation/normal.csv\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: Gear ===" && cat "$log_dir/candump.log"
 
@@ -338,7 +338,7 @@ jobs:
 
           echo "=== Starting candump RPM Spoofing Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n4\n100\n\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n4\n\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: RPM ===" && cat "$log_dir/candump.log"
 
@@ -374,7 +374,7 @@ jobs:
 
           echo "=== Starting candump RPM Spoofing Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n4\n100\ntests/simulation/normal.csv\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n4\ntests/simulation/normal.csv\n100\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: RPM ===" && cat "$log_dir/candump.log"
 
@@ -409,7 +409,7 @@ jobs:
 
           echo "=== Starting candump Manual Hand Input Attack ==="
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n5\n1\n043F 01 45 60 FF 6B 00 00 00\nrepeat 5 0.001\nrepeat abc\n0316 45 29 24 FF 29 24 00 FF\ndone\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n5\n\n1\n043F 01 45 60 FF 6B 00 00 00\nrepeat 5 0.001\nrepeat abc\n0316 45 29 24 FF 29 24 00 FF\ndone\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: Manual ===" && cat "$log_dir/candump.log"
 
@@ -452,13 +452,25 @@ jobs:
           1478198377.188000,0100,8,aa,bb,cc,dd,ee,ff,00,11,R
           EOF
           candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
-          printf '1\n5\n2\n'"$log_dir"'/test_attack.csv\nb\ny\n0\nq\n' | python tests/simulation/can_attack_sim.py
+          printf '1\n5\n\n2\n'"$log_dir"'/test_attack.csv\nb\ny\nq\n' | python tests/simulation/can_attack_sim.py
           kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
           echo "=== candump: CSV Replay ===" && cat "$log_dir/candump.log"
 
           # for model in "${models[@]}"; do
           #   stop_can_test_app "$model"
           # done
+
+      - name: Test — Scenario (test_scenario.json)
+        run: |
+          attack_type="scenario"
+          log_dir="/tmp/can-logs/${attack_type}"
+          mkdir -p "$log_dir"
+
+          echo "=== Starting candump Scenario Test ==="
+          candump vcan0 > "$log_dir/candump.log" 2>&1 & echo $! > "$log_dir/candump.pid"
+          printf '1\n6\ntests/simulation/test_scenario.json\nq\n' | python tests/simulation/can_attack_sim.py
+          kill $(cat "$log_dir/candump.pid") 2>/dev/null || true
+          echo "=== candump: Scenario ===" && cat "$log_dir/candump.log"
 
       - name: Tear down virtual CAN
         if: always()
