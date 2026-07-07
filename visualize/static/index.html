@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <title>Realtime Dashboard</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --panel-dark: #020617;
+            --panel-border: #334155;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+            --green: #22c55e;
+            --red: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: Inter, Segoe UI, Arial, sans-serif;
+            height: 100vh;
+            display: grid;
+            grid-template-columns: 70% 30%;
+        }
+
+        .left {
+            display: grid;
+            grid-template-rows: 1fr 1fr;
+            gap: 16px;
+            padding: 16px;
+            height: 100vh;
+        }
+
+        .right {
+            padding: 16px 16px 16px 0;
+            height: 100vh;
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            padding: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+            overflow: hidden;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .card-subtitle {
+            color: var(--muted);
+            font-size: 13px;
+            margin-top: 4px;
+        }
+
+        .chart-container {
+            height: calc(100% - 56px);
+        }
+
+        canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        .log-panel {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .log-content {
+            flex: 1;
+            overflow-y: auto;
+            background: var(--panel-dark);
+            border-radius: 12px;
+            padding: 12px;
+            font-family: Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            color: #dbeafe;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 10px var(--green);
+        }
+
+        .status-dot.offline {
+            background: var(--red);
+            box-shadow: 0 0 10px var(--red);
+        }
+
+        .badge {
+            background: #0f172a;
+            border: 1px solid var(--panel-border);
+            padding: 4px 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="left">
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">CAN Signals</div>
+                    <div class="card-subtitle">Realtime chart for a / b</div>
+                </div>
+
+                <div class="status">
+                    <span class="status-dot" id="dot1"></span>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <canvas id="chart1"></canvas>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Vehicle Metrics</div>
+                    <div class="card-subtitle">Realtime chart for c / d</div>
+                </div>
+
+                <div class="status">
+                    <span class="status-dot" id="dot2"></span>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <canvas id="chart2"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="right">
+        <div class="card log-panel">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Live Data Stream</div>
+                    <div class="card-subtitle">Incoming WebSocket messages</div>
+                </div>
+
+                <div class="status">
+                    <span id="wsStatus">Connecting</span>
+                    <span class="status-dot" id="wsDot"></span>
+                </div>
+            </div>
+
+            <div id="rawData" class="log-content">Waiting for data...</div>
+        </div>
+    </div>
+
+    <script>
+        Chart.defaults.color = "#cbd5e1";
+        Chart.defaults.borderColor = "#334155";
+
+        const maxPoints = 60;
+
+        const chartColors = [
+            "#38bdf8",
+            "#22c55e",
+            "#f97316",
+            "#e879f9",
+            "#f43f5e",
+            "#a3e635"
+        ];
+
+        function createChart(canvasId, labels) {
+            const datasets = labels.map((label, index) => ({
+                label: label,
+                data: [],
+                borderColor: chartColors[index % chartColors.length],
+                backgroundColor: chartColors[index % chartColors.length],
+                tension: 0.25,
+                borderWidth: 2,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                fill: false,
+                spanGaps: true
+            }));
+
+            return new Chart(document.getElementById(canvasId), {
+                type: "line",
+                data: {
+                    labels: [],
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    interaction: {
+                        intersect: false,
+                        mode: "index"
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: "#f8fafc"
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                color: "#94a3b8",
+                                maxTicksLimit: 8
+                            },
+                            grid: {
+                                color: "#1e293b"
+                            }
+                        },
+                        y: {
+                            min: 0,
+                            max: 3,
+                            ticks: {
+                                stepSize: 1,
+                                color: "#94a3b8"
+                            },
+                            grid: {
+                                color: "#1e293b"
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        const chart1 = createChart("chart1", ["a", "b"]);
+        const chart2 = createChart("chart2", ["c", "d"]);
+
+        function pushChart(chart, timeLabel, data) {
+            chart.data.labels.push(timeLabel);
+
+            chart.data.datasets.forEach(ds => {
+                const value = data[ds.label];
+
+                if (value === undefined || value === null || isNaN(Number(value))) {
+                    ds.data.push(null);
+                } else {
+                    ds.data.push(Number(value));
+                }
+            });
+
+            if (chart.data.labels.length > maxPoints) {
+                chart.data.labels.shift();
+
+                chart.data.datasets.forEach(ds => {
+                    ds.data.shift();
+                });
+            }
+
+            chart.update("none");
+        }
+
+        const rawDataEl = document.getElementById("rawData");
+
+        function appendLog(message) {
+            if (rawDataEl.textContent === "Waiting for data...") {
+                rawDataEl.textContent = "";
+            }
+
+            rawDataEl.textContent += message + "\n";
+            rawDataEl.scrollTop = rawDataEl.scrollHeight;
+        }
+
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+
+        const wsChart1 = new WebSocket(`${protocol}://${location.host}/ws/chart1`);
+        const wsChart2 = new WebSocket(`${protocol}://${location.host}/ws/chart2`);
+        const wsLog = new WebSocket(`${protocol}://${location.host}/ws/log`);
+
+        wsChart1.onopen = () => {
+            appendLog("[chart1] connected");
+        };
+
+        wsChart1.onmessage = event => {
+            const msg = JSON.parse(event.data);
+            const timeLabel = new Date(msg.timestamp).toLocaleTimeString();
+
+            pushChart(chart1, timeLabel, msg.data);
+        };
+
+        wsChart1.onclose = () => {
+            appendLog("[chart1] disconnected");
+        };
+
+        wsChart2.onopen = () => {
+            appendLog("[chart2] connected");
+        };
+
+        wsChart2.onmessage = event => {
+            const msg = JSON.parse(event.data);
+            const timeLabel = new Date(msg.timestamp).toLocaleTimeString();
+
+            pushChart(chart2, timeLabel, msg.data);
+        };
+
+        wsChart2.onclose = () => {
+            appendLog("[chart2] disconnected");
+        };
+
+        wsLog.onopen = () => {
+            appendLog("[log] connected");
+        };
+
+        wsLog.onmessage = event => {
+            const msg = JSON.parse(event.data);
+            const timeLabel = new Date(msg.timestamp).toLocaleTimeString();
+
+            appendLog(`[${timeLabel}] ${msg.line}`);
+        };
+
+        wsLog.onclose = () => {
+            appendLog("[log] disconnected");
+        };
+    </script>
+</body>
+</html>
