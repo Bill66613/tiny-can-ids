@@ -1,13 +1,78 @@
 import asyncio
 import json
+import os
 import random
+import sys
+import threading
 import time
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-app = FastAPI()
+# Make the repo root importable so can_attack_sim can be loaded
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+try:
+    import can
+    from tests.simulation.can_attack_sim import (
+        attack_scenario,
+        choose_interface,
+        _VIRTUAL_SENTINEL,
+    )
+    _CAN_AVAILABLE = True
+except ImportError:
+    _CAN_AVAILABLE = False
+
+# ---------------------------------------------------------------------------
+# Shared attack state: each key maps to 1 (attacking) or 0 (normal)
+# ---------------------------------------------------------------------------
+
+_ATTACK_KEYS = ["dos", "fuzzy", "gear", "rpm", "manual"]
+_attack_state: dict[str, int] = {k: 0 for k in _ATTACK_KEYS}
+_ATTACK_TYPE_MAP = {
+    "Dos": "dos",
+    "Fuzzy": "fuzzy",
+    "Gear": "gear",
+    "RPM": "rpm",
+    "Manual": "manual",
+}
+
+_SCENARIO_PATH = os.path.join(os.path.dirname(__file__), "test_scenario.json")
+
+
+def _run_scenario_loop() -> None:
+    """Background thread: run test_scenario.json forever via attack_scenario."""
+    if not _CAN_AVAILABLE:
+        return
+
+    def _on_state_change(attack_type: str, active: int) -> None:
+        key = _ATTACK_TYPE_MAP.get(attack_type)
+        if key:
+            _attack_state[key] = active
+
+    iface = choose_interface(0)  # 0 = first detected CAN interface; falls back to virtual
+    if iface == _VIRTUAL_SENTINEL:
+        bus = can.Bus(interface="virtual", channel="vcan_viz")
+    else:
+        bus = can.Bus(interface="socketcan", channel=iface)
+    try:
+        while True:  # Replay the scenario forever until the process is terminated
+            attack_scenario(bus, path=_SCENARIO_PATH, on_state_change=_on_state_change)
+    finally:
+        bus.shutdown()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    t = threading.Thread(target=_run_scenario_loop, daemon=True)
+    t.start()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -63,17 +128,15 @@ async def read_log_command(command: str):
         await process.wait()
 
 
-async def demo_chart1():
-    signals = {
-        "a": 0,
-        "b": 1,
-    }
-
+async def simulation_chart():
     while True:
-        for key in signals:
-            signals[key] = max(0, min(3, signals[key] + random.choice([-1, 0, 1])))
-
-        yield signals.copy()
+        yield {
+            "dos": _attack_state["dos"],
+            "fuzzy": _attack_state["fuzzy"],
+            "gear": _attack_state["gear"],
+            "rpm": _attack_state["rpm"],
+            "manual": _attack_state["manual"],
+        }
         await asyncio.sleep(0.5)
 
 
@@ -108,7 +171,7 @@ async def websocket_chart1(websocket: WebSocket):
     await websocket.accept()
 
     # Demo mode
-    reader = demo_chart1()
+    reader = simulation_chart()
 
     # Real command mode
     # reader = read_json_command("your_chart_1_command")

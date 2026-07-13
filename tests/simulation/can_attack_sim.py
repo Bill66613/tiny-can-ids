@@ -23,6 +23,7 @@ Usage::
 from __future__ import annotations
 
 import collections
+from typing import Callable
 import datetime
 import json
 import random
@@ -68,8 +69,15 @@ def discover_can_interfaces() -> list[str]:
     return interfaces
 
 
-def choose_interface() -> str:
-    """Let the user pick a CAN interface interactively.
+def choose_interface(auto_select: int | None = None) -> str:
+    """Let the user pick a CAN interface interactively, or auto-select by index.
+
+    Parameters
+    ----------
+    auto_select:
+        0-based index into the discovered interface list.  When provided the
+        function returns that interface without prompting.  If the index is out
+        of range, or no interfaces are found, ``_VIRTUAL_SENTINEL`` is returned.
 
     Returns either an interface name (e.g. ``vcan0``) or the sentinel
     ``_VIRTUAL_SENTINEL`` when the python-can virtual bus should be used.
@@ -82,6 +90,13 @@ def choose_interface() -> str:
         print("    sudo ip link add dev vcan0 type vcan")
         print("    sudo ip link set up vcan0")
         print("  Using python-can virtual bus (in-process simulation, no kernel module needed).\n")
+        return _VIRTUAL_SENTINEL
+
+    if auto_select is not None:
+        if 0 <= auto_select < len(interfaces):
+            print(f"\n  [Auto] Selected interface: {interfaces[auto_select]}")
+            return interfaces[auto_select]
+        print(f"\n  [Auto] Index {auto_select} out of range ({len(interfaces)} interface(s) found). Falling back to virtual bus.")
         return _VIRTUAL_SENTINEL
 
     print("\n  Available CAN interfaces:")
@@ -766,6 +781,7 @@ def _run_scenario_attack_item(
     log_path: str,
     results: list[dict],
     results_lock: threading.Lock,
+    on_state_change: "Callable[[str, int], None] | None" = None,
 ) -> None:
     """Run one attack_item from a scenario config, respecting *frequencies* and *repeat_interval*.
 
@@ -790,6 +806,9 @@ def _run_scenario_attack_item(
         print(f"\n  [Scenario] {attack_type} \u2014 run {freq_idx + 1}/{frequencies}")
         result: dict | None = None
 
+        if on_state_change is not None:
+            on_state_change(attack_type, 1)
+
         if attack_type == "Dos":
             result = attack_dos(bus, count=frame_count)
         elif attack_type == "Fuzzy":
@@ -812,21 +831,40 @@ def _run_scenario_attack_item(
                 count=send_count,
             )
 
+        if on_state_change is not None:
+            on_state_change(attack_type, 0)
+
         if result is not None:
             with results_lock:
                 results.append(result)
             _log_attack_result(log_path, result, add_separator=True)
 
 
-def attack_scenario(bus: can.Bus) -> None:
-    """Option 6 — Load and run an attack scenario from a JSON config file."""
-    print("\n  === Scenario Testing ===")
-    path_str = input("  Path to scenario JSON file: ").strip()
-    if not path_str:
-        print("  Cancelled.")
-        return
+def attack_scenario(
+    bus: can.Bus,
+    *,
+    path: str | None = None,
+    on_state_change: "Callable[[str, int], None] | None" = None,
+) -> None:
+    """Option 6 — Load and run an attack scenario from a JSON config file.
 
-    config = load_scenario_config(path_str)
+    Parameters
+    ----------
+    path:
+        Path to the scenario JSON file.  When omitted the user is prompted
+        interactively (original behaviour).
+    on_state_change:
+        Optional callback ``(attack_type, active)`` fired before/after each
+        attack run (``active=1`` when starting, ``0`` when done).
+    """
+    print("\n  === Scenario Testing ===")
+    if path is None:
+        path = input("  Path to scenario JSON file: ").strip()
+        if not path:
+            print("  Cancelled.")
+            return
+
+    config = load_scenario_config(path)
     if config is None:
         return  # validation errors already printed
 
@@ -853,6 +891,7 @@ def attack_scenario(bus: can.Bus) -> None:
                 t = threading.Thread(
                     target=_run_scenario_attack_item,
                     args=(bus, item, log_path, results, results_lock),
+                    kwargs={"on_state_change": on_state_change},
                     daemon=False,
                 )
                 threads.append(t)
@@ -871,7 +910,8 @@ def attack_scenario(bus: can.Bus) -> None:
             try:
                 for item in attack_items:
                     _run_scenario_attack_item(
-                        bus, item, log_path, results, results_lock
+                        bus, item, log_path, results, results_lock,
+                        on_state_change=on_state_change,
                     )
             except KeyboardInterrupt:
                 print("\n  [Interrupted]")
