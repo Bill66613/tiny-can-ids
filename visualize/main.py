@@ -44,12 +44,12 @@ _ATTACK_TYPE_MAP = {
 
 _SCENARIO_PATH = os.path.join(os.path.dirname(__file__), "test_scenario.json")
 
-_DETECT_ATTACK = ["dos", "fuzzy", "gear", "rpm", "manual"]
+_DETECT_ATTACK = ["dos", "fuzzy", "gear", "rpm"]
 _DETECT_MODEL = ["tnn", "dt", "lr"]
-_DETECT_BINARY = os.getenv("VISUALIZE_DETECTION_BINARY", "./can_test_app")
+_DETECT_BINARY = os.getenv("VISUALIZE_DETECTION_BINARY", "./mock_can_test_app")
 _DETECT_INTERFACE = os.getenv("VISUALIZE_DETECTION_INTERFACE", "")
 _PREDICTION_RE = re.compile(
-    r"^\[(PRED|ALERT)\]\s+([a-z]+)/([a-z]+)\b.*prediction=(\d+)",
+    r"^\[(PRED)\]\s+([a-z]+)/([a-z]+)\b(?:.*?ts=([\d.]+))?.*prediction=(\d+)",
     re.IGNORECASE,
 )
 
@@ -196,16 +196,26 @@ def parse_detection_line(line: str) -> dict | None:
 
     attack = match.group(2).lower()
     model = match.group(3).lower()
-    prediction = int(match.group(4))
+    ts_str = match.group(4)  # may be None if ts= not present
+    prediction = int(match.group(5))
 
     if attack not in _DETECT_ATTACK or model not in _DETECT_MODEL:
         return None
+
+    # Use ts from binary if available, else fall back to server wall clock
+    if ts_str is not None:
+        raw_ts = float(ts_str)
+        # tdr_can_dump emits milliseconds; SocketCAN emits seconds
+        timestamp_ms = int(raw_ts * 1000) if raw_ts < 1e12 else int(raw_ts)
+    else:
+        timestamp_ms = int(time.time() * 1000)
 
     payload = {name: 0 for name in _DETECT_ATTACK}
     payload[attack] = min(prediction, 1)
     return {
         "attack": attack,
         "model": model,
+        "timestamp": timestamp_ms,
         "line": line,
         "data": payload,
     }
@@ -332,7 +342,7 @@ async def websocket_chart2(websocket: WebSocket):
         async for payload in reader:
             await websocket.send_json(
                 {
-                    "timestamp": int(time.time() * 1000),
+                    "timestamp": payload["timestamp"],
                     "source": "chart2",
                     "attack": payload["attack"],
                     "model": payload["model"],

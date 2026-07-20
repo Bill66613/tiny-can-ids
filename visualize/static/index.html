@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset="UTF-8" />
     <title>Realtime Dashboard</title>
@@ -130,6 +131,68 @@
             font-size: 12px;
             color: var(--muted);
         }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid var(--panel-border);
+        }
+
+        .tab-button {
+            padding: 8px 12px;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s ease;
+        }
+
+        .tab-button:hover {
+            color: var(--text);
+        }
+
+        .tab-button.active {
+            color: var(--green);
+            border-bottom-color: var(--green);
+        }
+
+        .split-container {
+            display: flex;
+            gap: 12px;
+            height: calc(100% - 60px);
+        }
+
+        .chart-panel {
+            flex: 4;
+            display: flex;
+        }
+
+        .detection-panel {
+            flex: 1;
+            display: none;
+            flex-direction: column;
+        }
+
+        .detection-panel.visible {
+            display: flex;
+        }
+
+        .detection-log {
+            flex: 1;
+            overflow-y: auto;
+            background: var(--panel-dark);
+            border-radius: 12px;
+            padding: 12px;
+            font-family: Consolas, monospace;
+            font-size: 11px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            color: #dbeafe;
+            border: 1px solid rgba(30, 144, 255, 0.2);
+        }
     </style>
 </head>
 
@@ -157,7 +220,6 @@
                 <div>
                     <div class="card-title">Detection Status</div>
                     <div class="card-subtitle">Supported attacks from binary detection stream</div>
-                    <div class="card-subtitle">0 = normal &nbsp;|&nbsp; 1 = attack</div>
                 </div>
 
                 <div class="status">
@@ -165,8 +227,19 @@
                 </div>
             </div>
 
-            <div class="chart-container">
-                <canvas id="chart2"></canvas>
+            <div class="tabs">
+                <button class="tab-button" id="toggleDetectionLog">Show Detection Log</button>
+            </div>
+
+            <div class="split-container">
+                <div class="chart-panel">
+                    <div class="chart-container">
+                        <canvas id="chart2"></canvas>
+                    </div>
+                </div>
+                <div class="detection-panel" id="detectionPanel">
+                    <div id="detectionLog" class="detection-log">Waiting for detection output...</div>
+                </div>
             </div>
         </div>
     </div>
@@ -293,6 +366,7 @@
         }
 
         const rawDataEl = document.getElementById("rawData");
+        const detectionLogEl = document.getElementById("detectionLog");
         const wsStatusEl = document.getElementById("wsStatus");
         const wsDotEl = document.getElementById("wsDot");
 
@@ -305,10 +379,34 @@
             rawDataEl.scrollTop = rawDataEl.scrollHeight;
         }
 
+        function appendDetectionLog(message) {
+            if (detectionLogEl.textContent === "Waiting for detection output...") {
+                detectionLogEl.textContent = "";
+            }
+
+            detectionLogEl.textContent += message + "\n";
+            // Scroll to bottom - use setTimeout to ensure DOM is updated first
+            setTimeout(() => {
+                detectionLogEl.scrollTop = detectionLogEl.scrollHeight;
+            }, 0);
+        }
+
         function setLogStatus(status, connected) {
             wsStatusEl.textContent = status;
             wsDotEl.classList.toggle("offline", !connected);
         }
+
+        // Toggle detection log visibility
+        const toggleBtn = document.getElementById("toggleDetectionLog");
+        const detectionPanel = document.getElementById("detectionPanel");
+        let logVisible = false;
+
+        toggleBtn.addEventListener("click", () => {
+            logVisible = !logVisible;
+            detectionPanel.classList.toggle("visible", logVisible);
+            toggleBtn.classList.toggle("active", logVisible);
+            toggleBtn.textContent = logVisible ? "Hide Detection Log" : "Show Detection Log";
+        });
 
         const protocol = location.protocol === "https:" ? "wss" : "ws";
 
@@ -317,7 +415,9 @@
         const wsLog = new WebSocket(`${protocol}://${location.host}/ws/log`);
 
         wsChart1.onopen = () => {
-            appendLog("[chart1] connected");
+            const msg = "[chart1] connected";
+            appendLog(msg);
+            appendDetectionLog(msg);
         };
 
         wsChart1.onmessage = event => {
@@ -328,23 +428,31 @@
         };
 
         wsChart1.onclose = () => {
-            appendLog("[chart1] disconnected");
+            const msg = "[chart1] disconnected";
+            appendLog(msg);
+            appendDetectionLog(msg);
         };
 
         wsChart2.onopen = () => {
-            appendLog("[chart2] connected");
+            const msg = "[chart2] connected";
+            appendLog(msg);
+            appendDetectionLog(msg);
         };
 
         wsChart2.onmessage = event => {
             const msg = JSON.parse(event.data);
 
             if (msg.modes) {
-                appendLog(`[chart2] detect attacks: ${msg.modes.attacks.join(", ")}`);
-                appendLog(`[chart2] detect models: ${msg.modes.models.join(", ")}`);
+                const attacksMsg = `[chart2] detect attacks: ${msg.modes.attacks.join(", ")}`;
+                const modelsMsg = `[chart2] detect models: ${msg.modes.models.join(", ")}`;
+                appendLog(attacksMsg);
+                appendLog(modelsMsg);
+                appendDetectionLog(attacksMsg);
+                appendDetectionLog(modelsMsg);
             }
 
             if (msg.line) {
-                appendLog(`[chart2] ${msg.line}`);
+                appendDetectionLog(msg.line);
             }
 
             if (!msg.data) {
@@ -357,7 +465,9 @@
         };
 
         wsChart2.onclose = () => {
-            appendLog("[chart2] disconnected");
+            const msg = "[chart2] disconnected";
+            appendLog(msg);
+            appendDetectionLog(msg);
         };
 
         wsLog.onopen = () => {
@@ -382,4 +492,5 @@
         };
     </script>
 </body>
+
 </html>

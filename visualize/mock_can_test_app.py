@@ -34,18 +34,15 @@ def main():
         while True:
             counter += 1
             
-            # Randomly generate prediction (0 or 1)
-            prediction = random.choice([0, 1])
+            # Randomly generate prediction (0 or 1) — ~10% chance of attack
+            prediction = 1 if random.random() < 0.10 else 0
             
-            # Output PRED line
-            print(f"[PRED] {attack}/{model} prediction={prediction}", flush=True)
-            
-            # Occasionally output ALERT (1 in 3 chance if prediction is 1)
-            if prediction == 1 and random.random() < 0.33:
-                print(f"[ALERT] {attack}/{model} attack_detected prediction=1", flush=True)
+            # Output PRED line with timestamp
+            ts = time.time()
+            print(f"[PRED] {attack}/{model} ts={ts:.6f} prediction={prediction}", flush=True)
             
             # Small delay between predictions
-            time.sleep(0.5)
+            time.sleep(1)
             
             # Stop after a reasonable number to avoid infinite loops in testing
             if counter >= 100:
