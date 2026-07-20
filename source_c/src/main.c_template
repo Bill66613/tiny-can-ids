@@ -229,7 +229,8 @@ static int dispatch_process_window(
 
 		int pred = -1;
 		entry->fn(ordered_window, &pred);
-		printf("[PRED] %s prediction=%d\n", entry->label, pred);
+		double window_ts = ordered_window[frame_count - 1].timestamp;
+		printf("[PRED] %s ts=%.6f prediction=%d\n", entry->label, window_ts, pred);
 		fflush(stdout);
 
 		// --- STATE MACHINE LOGIC FOR ATTACK SESSIONS (SILENT RECORDING) ---
@@ -247,7 +248,7 @@ static int dispatch_process_window(
 				g_current_session_start_ts = ordered_window[0].timestamp;
 			}
 
-			printf("[ALERT] %s attack_detected prediction=%d\n", entry->label, pred);
+			printf("[ALERT] %s ts=%.6f attack_detected prediction=%d\n", entry->label, window_ts, pred);
 			fflush(stdout);
 		}
 		else 

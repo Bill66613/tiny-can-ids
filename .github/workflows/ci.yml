@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, feature/#37-update-inference-app]
+    branches: [main, develop, nam]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
