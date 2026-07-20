@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-import random
+import re
 import shutil
 import sys
 import threading
@@ -23,6 +23,7 @@ try:
         choose_interface,
         _VIRTUAL_SENTINEL,
     )
+
     _CAN_AVAILABLE = True
 except ImportError:
     _CAN_AVAILABLE = False
@@ -43,6 +44,15 @@ _ATTACK_TYPE_MAP = {
 
 _SCENARIO_PATH = os.path.join(os.path.dirname(__file__), "test_scenario.json")
 
+_DETECT_ATTACK = ["dos", "fuzzy", "gear", "rpm", "manual"]
+_DETECT_MODEL = ["tnn", "dt", "lr"]
+_DETECT_BINARY = os.getenv("VISUALIZE_DETECTION_BINARY", "./can_test_app")
+_DETECT_INTERFACE = os.getenv("VISUALIZE_DETECTION_INTERFACE", "")
+_PREDICTION_RE = re.compile(
+    r"^\[(PRED|ALERT)\]\s+([a-z]+)/([a-z]+)\b.*prediction=(\d+)",
+    re.IGNORECASE,
+)
+
 
 def _run_scenario_loop() -> None:
     """Background thread: run test_scenario.json forever via attack_scenario."""
@@ -54,7 +64,9 @@ def _run_scenario_loop() -> None:
         if key:
             _attack_state[key] = active
 
-    iface = choose_interface(0)  # 0 = first detected CAN interface; falls back to virtual
+    iface = choose_interface(
+        0
+    )  # 0 = first detected CAN interface; falls back to virtual
     if iface == _VIRTUAL_SENTINEL:
         bus = can.Bus(interface="virtual", channel="vcan_viz")
     else:
@@ -141,18 +153,110 @@ async def simulation_chart():
         await asyncio.sleep(0.5)
 
 
-async def demo_chart2():
-    signals = {
-        "c": 2,
-        "d": 3,
+def _resolve_detection_interface() -> str:
+    if _DETECT_INTERFACE:
+        return _DETECT_INTERFACE
+
+    if _CAN_AVAILABLE:
+        iface = choose_interface(0)
+        if iface == _VIRTUAL_SENTINEL:
+            return "vcan_viz"
+        return iface
+
+    return "vcan0"
+
+
+def _build_detection_commands() -> list[list[str]]:
+    interface = _resolve_detection_interface()
+    commands: list[list[str]] = []
+
+    for attack in _DETECT_ATTACK:
+        for model in _DETECT_MODEL:
+            commands.append(
+                [
+                    _DETECT_BINARY,
+                    "-a",
+                    attack,
+                    "-m",
+                    model,
+                    "-i",
+                    interface,
+                    "-s",
+                    "50",
+                ]
+            )
+
+    return commands
+
+
+def parse_detection_line(line: str) -> dict | None:
+    match = _PREDICTION_RE.match(line.strip())
+    if not match:
+        return None
+
+    attack = match.group(2).lower()
+    model = match.group(3).lower()
+    prediction = int(match.group(4))
+
+    if attack not in _DETECT_ATTACK or model not in _DETECT_MODEL:
+        return None
+
+    payload = {name: 0 for name in _DETECT_ATTACK}
+    payload[attack] = min(prediction, 1)
+    return {
+        "attack": attack,
+        "model": model,
+        "line": line,
+        "data": payload,
     }
 
-    while True:
-        for key in signals:
-            signals[key] = max(0, min(3, signals[key] + random.choice([-1, 0, 1])))
 
-        yield signals.copy()
-        await asyncio.sleep(0.7)
+async def _stream_detection_command(command: list[str], queue: asyncio.Queue):
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+
+    try:
+        while True:
+            line = await process.stdout.readline()
+
+            if not line:
+                break
+
+            text = line.decode(errors="replace").rstrip()
+            parsed = parse_detection_line(text)
+            if parsed is not None:
+                await queue.put(parsed)
+    finally:
+        if process.returncode is None:
+            process.terminate()
+        await process.wait()
+        await queue.put(None)
+
+
+async def detection_chart2():
+    commands = _build_detection_commands()
+    queue: asyncio.Queue = asyncio.Queue()
+    tasks = [
+        asyncio.create_task(_stream_detection_command(command, queue))
+        for command in commands
+    ]
+    active_tasks = len(tasks)
+
+    try:
+        while active_tasks > 0:
+            item = await queue.get()
+            if item is None:
+                active_tasks -= 1
+                continue
+
+            yield item
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def candump_log(interface: str):
@@ -175,11 +279,13 @@ async def websocket_chart1(websocket: WebSocket):
 
     try:
         async for payload in reader:
-            await websocket.send_json({
-                "timestamp": int(time.time() * 1000),
-                "source": "chart1",
-                "data": payload,
-            })
+            await websocket.send_json(
+                {
+                    "timestamp": int(time.time() * 1000),
+                    "source": "chart1",
+                    "data": payload,
+                }
+            )
     except WebSocketDisconnect:
         pass
 
@@ -188,19 +294,52 @@ async def websocket_chart1(websocket: WebSocket):
 async def websocket_chart2(websocket: WebSocket):
     await websocket.accept()
 
-    # Demo mode
-    reader = demo_chart2()
+    await websocket.send_json(
+        {
+            "timestamp": int(time.time() * 1000),
+            "source": "chart2",
+            "modes": {
+                "attacks": _DETECT_ATTACK,
+                "models": _DETECT_MODEL,
+            },
+        }
+    )
 
-    # Real command mode
-    # reader = read_json_command("your_chart_2_command")
+    detection_commands = _build_detection_commands()
+    if not detection_commands:
+        await websocket.send_json(
+            {
+                "timestamp": int(time.time() * 1000),
+                "source": "chart2",
+                "line": "[FAILED] No detection commands configured",
+            }
+        )
+        await websocket.close()
+        return
+
+    await websocket.send_json(
+        {
+            "timestamp": int(time.time() * 1000),
+            "source": "chart2",
+            "line": "[chart2] commands: "
+            + "; ".join(" ".join(command) for command in detection_commands),
+        }
+    )
+
+    reader = detection_chart2()
 
     try:
         async for payload in reader:
-            await websocket.send_json({
-                "timestamp": int(time.time() * 1000),
-                "source": "chart2",
-                "data": payload,
-            })
+            await websocket.send_json(
+                {
+                    "timestamp": int(time.time() * 1000),
+                    "source": "chart2",
+                    "attack": payload["attack"],
+                    "model": payload["model"],
+                    "line": payload["line"],
+                    "data": payload["data"],
+                }
+            )
     except WebSocketDisconnect:
         pass
 
@@ -219,10 +358,12 @@ async def websocket_log(websocket: WebSocket):
 
     try:
         async for line in reader:
-            await websocket.send_json({
-                "timestamp": int(time.time() * 1000),
-                "source": "log",
-                "line": line,
-            })
+            await websocket.send_json(
+                {
+                    "timestamp": int(time.time() * 1000),
+                    "source": "log",
+                    "line": line,
+                }
+            )
     except WebSocketDisconnect:
         pass

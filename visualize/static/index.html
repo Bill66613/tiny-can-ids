@@ -155,8 +155,9 @@
         <div class="card">
             <div class="card-header">
                 <div>
-                    <div class="card-title">Vehicle Metrics</div>
-                    <div class="card-subtitle">Realtime chart for c / d</div>
+                    <div class="card-title">Detection Status</div>
+                    <div class="card-subtitle">Supported attacks from binary detection stream</div>
+                    <div class="card-subtitle">0 = normal &nbsp;|&nbsp; 1 = attack</div>
                 </div>
 
                 <div class="status">
@@ -265,7 +266,7 @@
         }
 
         const chart1 = createChart("chart1", ["dos", "fuzzy", "gear", "rpm", "manual"]);
-        const chart2 = createChart("chart2", ["c", "d"]);
+        const chart2 = createChart("chart2", ["dos", "fuzzy", "gear", "rpm"]);
 
         function pushChart(chart, timeLabel, data) {
             chart.data.labels.push(timeLabel);
@@ -336,6 +337,20 @@
 
         wsChart2.onmessage = event => {
             const msg = JSON.parse(event.data);
+
+            if (msg.modes) {
+                appendLog(`[chart2] detect attacks: ${msg.modes.attacks.join(", ")}`);
+                appendLog(`[chart2] detect models: ${msg.modes.models.join(", ")}`);
+            }
+
+            if (msg.line) {
+                appendLog(`[chart2] ${msg.line}`);
+            }
+
+            if (!msg.data) {
+                return;
+            }
+
             const timeLabel = new Date(msg.timestamp).toLocaleTimeString();
 
             pushChart(chart2, timeLabel, msg.data);
