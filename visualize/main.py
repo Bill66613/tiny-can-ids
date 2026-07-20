@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import random
+import shutil
 import sys
 import threading
 import time
@@ -154,27 +155,23 @@ async def demo_chart2():
         await asyncio.sleep(0.7)
 
 
-async def demo_log():
-    counter = 0
-
-    while True:
-        counter += 1
-        level = random.choice(["INFO", "WARN", "DEBUG", "ERROR"])
-
-        yield f"[{level}] message #{counter} from log command"
-
-        await asyncio.sleep(1)
+async def candump_log(interface: str):
+    if shutil.which("candump"):
+        async for line in read_log_command(f"candump {interface}"):
+            yield line
+    elif shutil.which("tdr_can_dump"):
+        async for line in read_log_command(f"tdr_can_dump {interface} 0 0"):
+            yield line
+    else:
+        yield "[FAILED] No CAN dump tool found (candump / tdr_can_dump)"
+        return
 
 
 @app.websocket("/ws/chart1")
 async def websocket_chart1(websocket: WebSocket):
     await websocket.accept()
 
-    # Demo mode
     reader = simulation_chart()
-
-    # Real command mode
-    # reader = read_json_command("your_chart_1_command")
 
     try:
         async for payload in reader:
@@ -212,11 +209,13 @@ async def websocket_chart2(websocket: WebSocket):
 async def websocket_log(websocket: WebSocket):
     await websocket.accept()
 
-    # Demo mode
-    reader = demo_log()
-
-    # Real command mode
-    # reader = read_log_command("your_log_command")
+    if _CAN_AVAILABLE:
+        iface = choose_interface(0)
+        if iface == _VIRTUAL_SENTINEL:
+            iface = "vcan_viz"
+        reader = candump_log(iface)
+    else:
+        reader = candump_log("vcan0")  # fallback virtual interface
 
     try:
         async for line in reader:

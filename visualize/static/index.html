@@ -292,6 +292,8 @@
         }
 
         const rawDataEl = document.getElementById("rawData");
+        const wsStatusEl = document.getElementById("wsStatus");
+        const wsDotEl = document.getElementById("wsDot");
 
         function appendLog(message) {
             if (rawDataEl.textContent === "Waiting for data...") {
@@ -300,6 +302,11 @@
 
             rawDataEl.textContent += message + "\n";
             rawDataEl.scrollTop = rawDataEl.scrollHeight;
+        }
+
+        function setLogStatus(status, connected) {
+            wsStatusEl.textContent = status;
+            wsDotEl.classList.toggle("offline", !connected);
         }
 
         const protocol = location.protocol === "https:" ? "wss" : "ws";
@@ -339,6 +346,7 @@
         };
 
         wsLog.onopen = () => {
+            setLogStatus("Connected", true);
             appendLog("[log] connected");
         };
 
@@ -350,7 +358,12 @@
         };
 
         wsLog.onclose = () => {
+            setLogStatus("Disconnected", false);
             appendLog("[log] disconnected");
+        };
+
+        wsLog.onerror = () => {
+            setLogStatus("Disconnected", false);
         };
     </script>
 </body>
