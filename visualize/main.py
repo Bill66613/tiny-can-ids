@@ -375,5 +375,5 @@ async def websocket_log(websocket: WebSocket):
                     "line": line,
                 }
             )
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         pass

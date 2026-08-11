@@ -50,6 +50,14 @@
         ],
         "frequencies": 2,
         "repeat_interval": 3
+      },
+      {
+        "id": 7,
+        "attack_type": "Manual",
+        "frames": 0,
+        "path": "./18820_2026_04_10_16_42_44.blf",
+        "frequencies": 2,
+        "repeat_interval": 3
       }
     ]
   },

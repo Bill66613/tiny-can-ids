@@ -228,6 +228,37 @@ def _parse_can_csv(path, filter_flag=None) -> list[tuple[float, can.Message]]:
     return frames
 
 
+def _parse_can_blf(path) -> list[tuple[float, can.Message]]:
+    """Parse a BLF log file and return a list of (timestamp, can.Message)."""
+    frames = []
+    try:
+        with open(path, "rb") as blf_file:
+            log = can.BLFReader(blf_file)
+            for msg in log:
+                frames.append((msg.timestamp, msg))
+    except Exception as e:
+        print(f"  [ERROR] Failed to read BLF file '{path}': {e}")
+    return frames
+
+
+def _parse_can_file(path, filter_flag=None) -> list[tuple[float, can.Message]]:
+    """Auto-detect file type (CSV or BLF) and parse accordingly.
+
+    Parameters
+    ----------
+    path:
+        Path to a CAN data file (.csv or .blf).
+    filter_flag:
+        Only used for CSV files — passed through to ``_parse_can_csv``.
+    """
+    ext = Path(path).suffix.lower()
+    if ext == ".blf":
+        if filter_flag is not None:
+            print("  [WARNING] filter_flag is not supported for BLF files — ignoring.")
+        return _parse_can_blf(path)
+    return _parse_can_csv(path, filter_flag=filter_flag)
+
+
 def replay_can_frames(bus, frames, stop_event=None,
                       use_timing=True, result_container=None) -> int:
     if not frames:
@@ -328,7 +359,7 @@ def start_normal_replay_thread(
                 args=(bus, 0, 0.002, stop_event, result_container),
             )
         else:
-            frames = _parse_can_csv(normal_path)
+            frames = _parse_can_file(normal_path)
             t = threading.Thread(
                 target=replay_can_frames,
                 args=(bus, frames, stop_event, True, result_container),
@@ -536,7 +567,7 @@ def manual_csv_load(
         type_label = "attack" if not send_all else "all"
         print(f"  Send {type_label} frames \n")
 
-        raw = _parse_can_csv(str(p), filter_flag="R" if not send_all else None)
+        raw = _parse_can_file(str(p), filter_flag="R" if not send_all else None)
         print(f"\n  Loaded {len(raw)} frames from {p.name}")
         if not raw:
             print("  No frames to send after filtering.")
@@ -569,7 +600,7 @@ def manual_csv_load(
         if not p.exists():
             print(f"  [ERROR] CSV path not found: {path}")
             return None
-        raw = _parse_can_csv(str(p))
+        raw = _parse_can_file(str(p))
         if not raw:
             print(f"  [ERROR] No frames loaded from {path}")
             return None
@@ -753,7 +784,7 @@ def _parse_manual_frames(item: dict) -> list[can.Message] | None:
         if not p.exists():
             print(f"  [ERROR] Manual frames path not found: {path_val}")
             return None
-        raw = _parse_can_csv(str(p))
+        raw = _parse_can_file(str(p))
         return [msg for _, msg in raw]
 
     if isinstance(frames_val, list):
