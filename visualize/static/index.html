@@ -338,8 +338,10 @@
             });
         }
 
-        const chart1 = createChart("chart1", ["dos", "fuzzy", "gear", "rpm", "manual"]);
-        const chart2 = createChart("chart2", ["dos", "fuzzy", "gear", "rpm"]);
+        // const chart1 = createChart("chart1", ["dos", "fuzzy", "gear", "rpm", "manual"]);
+        // const chart2 = createChart("chart2", ["dos", "fuzzy", "gear", "rpm"]);
+        const chart1 = createChart("chart1", ["dos"]);
+        const chart2 = createChart("chart2", ["dos - dt", "dos - tnn"]);
 
         function pushChart(chart, timeLabel, data) {
             chart.data.labels.push(timeLabel);

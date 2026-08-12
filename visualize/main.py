@@ -1,17 +1,24 @@
 import asyncio
 import json
 import os
-import re
 import shutil
 import sys
 import threading
 import time
 
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+try:
+    import paho.mqtt.client as mqtt
+
+    _MQTT_AVAILABLE = True
+except ImportError:
+    _MQTT_AVAILABLE = False
 
 # Make the repo root importable so can_attack_sim can be loaded
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -44,14 +51,21 @@ _ATTACK_TYPE_MAP = {
 
 _SCENARIO_PATH = os.path.join(os.path.dirname(__file__), "test_scenario.json")
 
-_DETECT_ATTACK = ["dos", "fuzzy", "gear", "rpm"]
-_DETECT_MODEL = ["tnn", "dt", "lr"]
-_DETECT_BINARY = os.getenv("VISUALIZE_DETECTION_BINARY", "./mock_can_test_app")
-_DETECT_INTERFACE = os.getenv("VISUALIZE_DETECTION_INTERFACE", "")
-_PREDICTION_RE = re.compile(
-    r"^\[(PRED)\]\s+([a-z]+)/([a-z]+)\b(?:.*?ts=([\d.]+))?.*prediction=(\d+)",
-    re.IGNORECASE,
-)
+# _DETECT_ATTACK = ["dos", "fuzzy", "gear", "rpm"]
+# _DETECT_MODEL = ["tnn", "dt", "lr"]
+_DETECT_ATTACK = ["dos"]
+_DETECT_MODEL = ["tnn", "dt"]
+_MQTT_HOST = os.getenv("VISUALIZE_MQTT_HOST", "127.0.0.1")
+_MQTT_PORT = int(os.getenv("VISUALIZE_MQTT_PORT", "1883"))
+_MQTT_TOPIC = os.getenv("VISUALIZE_MQTT_TOPIC", "/ids")
+_MQTT_CLIENT_ID = os.getenv("VISUALIZE_MQTT_CLIENT_ID", "viz-chart2")
+_MQTT_USERNAME = os.getenv("VISUALIZE_MQTT_USERNAME", "")
+_MQTT_PASSWORD = os.getenv("VISUALIZE_MQTT_PASSWORD", "")
+_LAST_DETECTION_VALUES: dict[str, int] = {
+    f"{attack_name} - {model_name}": 0
+    for attack_name in _DETECT_ATTACK
+    for model_name in _DETECT_MODEL
+}
 
 
 def _run_scenario_loop() -> None:
@@ -87,6 +101,54 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.post("/api/test-publish")
+async def api_test_publish(payload: dict[str, Any] | None = None):
+    body = payload or {}
+    attack = str(body.get("attack-type", body.get("attack_type", "dos"))).lower()
+    model = str(body.get("model", "tnn")).lower()
+    mode = str(body.get("mode", "inference")).lower()
+    pred = body.get("pred")
+    if pred is None:
+        pred = body.get("data")
+    if pred is None:
+        pred = 1
+
+    msg = {
+        "attack-type": attack,
+        "model": model,
+        "mode": mode,
+        "pred": int(pred),
+    }
+
+    if not _MQTT_AVAILABLE:
+        return {
+            "ok": False,
+            "error": "paho-mqtt is not installed. Run: pip install paho-mqtt",
+            "message": msg,
+        }
+
+    client = mqtt.Client(client_id=f"{_MQTT_CLIENT_ID}-test")
+    if _MQTT_USERNAME:
+        client.username_pw_set(_MQTT_USERNAME, _MQTT_PASSWORD)
+
+    try:
+        client.connect(_MQTT_HOST, _MQTT_PORT, keepalive=30)
+        client.publish(_MQTT_TOPIC, json.dumps(msg), qos=0, retain=False)
+        client.disconnect()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "message": msg,
+        }
+
+    return {
+        "ok": True,
+        "topic": _MQTT_TOPIC,
+        "message": msg,
+    }
 
 
 @app.get("/")
@@ -153,120 +215,152 @@ async def simulation_chart():
         await asyncio.sleep(0.5)
 
 
-def _resolve_detection_interface() -> str:
-    if _DETECT_INTERFACE:
-        return _DETECT_INTERFACE
-
-    if _CAN_AVAILABLE:
-        iface = choose_interface(0)
-        if iface == _VIRTUAL_SENTINEL:
-            return "vcan_viz"
-        return iface
-
-    return "vcan0"
+def _build_detection_payload(attack: str, model: str, pred: int) -> dict[str, int]:
+    payload = _LAST_DETECTION_VALUES.copy()
+    payload[f"{attack} - {model}"] = 1 if pred else 0
+    _LAST_DETECTION_VALUES.update(payload)
+    return payload
 
 
-def _build_detection_commands() -> list[list[str]]:
-    interface = _resolve_detection_interface()
-    commands: list[list[str]] = []
+def parse_detection_message(message: dict[str, Any]) -> dict | None:
+    attack = str(message.get("attack-type", message.get("attack_type", ""))).lower()
+    model = str(message.get("model", "")).lower()
+    mode = str(message.get("mode", "")).lower()
 
-    for attack in _DETECT_ATTACK:
-        for model in _DETECT_MODEL:
-            commands.append(
-                [
-                    _DETECT_BINARY,
-                    "-a",
-                    attack,
-                    "-m",
-                    model,
-                    "-i",
-                    interface,
-                    "-s",
-                    "50",
-                ]
-            )
-
-    return commands
-
-
-def parse_detection_line(line: str) -> dict | None:
-    match = _PREDICTION_RE.match(line.strip())
-    if not match:
+    if mode != "inference":
         return None
-
-    attack = match.group(2).lower()
-    model = match.group(3).lower()
-    ts_str = match.group(4)  # may be None if ts= not present
-    prediction = int(match.group(5))
-
     if attack not in _DETECT_ATTACK or model not in _DETECT_MODEL:
         return None
 
-    # Use ts from binary if available, else fall back to server wall clock
-    if ts_str is not None:
-        raw_ts = float(ts_str)
-        # tdr_can_dump emits milliseconds; SocketCAN emits seconds
-        timestamp_ms = int(raw_ts * 1000) if raw_ts < 1e12 else int(raw_ts)
-    else:
-        timestamp_ms = int(time.time() * 1000)
+    try:
+        prediction = int(message.get("pred", 0))
+    except (TypeError, ValueError):
+        return None
 
-    payload = {name: 0 for name in _DETECT_ATTACK}
-    payload[attack] = min(prediction, 1)
+    payload = _build_detection_payload(attack, model, prediction)
     return {
         "attack": attack,
         "model": model,
-        "timestamp": timestamp_ms,
-        "line": line,
+        "timestamp": int(time.time() * 1000),
+        "line": f"[MQTT] attack-type={attack} model={model} mode={mode} pred={prediction}",
         "data": payload,
     }
 
 
-async def _stream_detection_command(command: list[str], queue: asyncio.Queue):
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
+async def detection_chart2_mqtt():
+    if not _MQTT_AVAILABLE:
+        while True:
+            yield {
+                "timestamp": int(time.time() * 1000),
+                "source": "chart2",
+                "attack": "",
+                "model": "",
+                "line": "[FAILED] paho-mqtt is not installed. Run: pip install paho-mqtt",
+                "data": _build_detection_payload("dos", "tnn", 0),
+            }
+            await asyncio.sleep(1)
+
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    client = mqtt.Client(client_id=_MQTT_CLIENT_ID, clean_session=True)
+    client.reconnect_delay_set(min_delay=1, max_delay=5)
+    if _MQTT_USERNAME:
+        client.username_pw_set(_MQTT_USERNAME, _MQTT_PASSWORD)
+
+    def _emit(item: dict[str, Any]) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, item)
+
+    def on_connect(client, userdata, flags, rc):
+        if rc == 0:
+            client.subscribe(_MQTT_TOPIC)
+            _emit(
+                {
+                    "timestamp": int(time.time() * 1000),
+                    "source": "chart2",
+                    "attack": "",
+                    "model": "",
+                    "line": f"[chart2] MQTT connected: {_MQTT_HOST}:{_MQTT_PORT}, topic={_MQTT_TOPIC}",
+                    "data": _LAST_DETECTION_VALUES.copy(),
+                }
+            )
+        else:
+            _emit(
+                {
+                    "timestamp": int(time.time() * 1000),
+                    "source": "chart2",
+                    "attack": "",
+                    "model": "",
+                    "line": f"[FAILED] MQTT connect rc={rc}",
+                    "data": _LAST_DETECTION_VALUES.copy(),
+                }
+            )
+
+    def on_disconnect(client, userdata, rc):
+        _emit(
+            {
+                "timestamp": int(time.time() * 1000),
+                "source": "chart2",
+                "attack": "",
+                "model": "",
+                "line": f"[chart2] MQTT disconnected (rc={rc}); reconnecting...",
+                "data": _LAST_DETECTION_VALUES.copy(),
+            }
+        )
+
+    def on_message(client, userdata, msg):
+        try:
+            decoded = msg.payload.decode("utf-8")
+            message = json.loads(decoded)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return
+
+        parsed = parse_detection_message(message)
+        if parsed is not None:
+            _emit(parsed)
+
+    client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
+    client.on_message = on_message
 
     try:
         while True:
-            line = await process.stdout.readline()
-
-            if not line:
+            try:
+                client.connect(_MQTT_HOST, _MQTT_PORT, keepalive=30)
+                client.loop_start()
                 break
+            except Exception as exc:
+                _emit(
+                    {
+                        "timestamp": int(time.time() * 1000),
+                        "source": "chart2",
+                        "attack": "",
+                        "model": "",
+                        "line": f"[chart2] MQTT reconnecting: {exc}",
+                        "data": _LAST_DETECTION_VALUES.copy(),
+                    }
+                )
+                await asyncio.sleep(2)
 
-            text = line.decode(errors="replace").rstrip()
-            parsed = parse_detection_line(text)
-            if parsed is not None:
-                await queue.put(parsed)
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=1.0)
+                yield item
+            except asyncio.TimeoutError:
+                yield {
+                    "timestamp": int(time.time() * 1000),
+                    "source": "chart2",
+                    "attack": "",
+                    "model": "",
+                    "line": "[chart2] keepalive",
+                    "data": _LAST_DETECTION_VALUES.copy(),
+                }
     finally:
-        if process.returncode is None:
-            process.terminate()
-        await process.wait()
-        await queue.put(None)
-
-
-async def detection_chart2():
-    commands = _build_detection_commands()
-    queue: asyncio.Queue = asyncio.Queue()
-    tasks = [
-        asyncio.create_task(_stream_detection_command(command, queue))
-        for command in commands
-    ]
-    active_tasks = len(tasks)
-
-    try:
-        while active_tasks > 0:
-            item = await queue.get()
-            if item is None:
-                active_tasks -= 1
-                continue
-
-            yield item
-    finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            client.loop_stop()
+            client.disconnect()
+        except Exception:
+            pass
 
 
 async def candump_log(interface: str):
@@ -315,28 +409,15 @@ async def websocket_chart2(websocket: WebSocket):
         }
     )
 
-    detection_commands = _build_detection_commands()
-    if not detection_commands:
-        await websocket.send_json(
-            {
-                "timestamp": int(time.time() * 1000),
-                "source": "chart2",
-                "line": "[FAILED] No detection commands configured",
-            }
-        )
-        await websocket.close()
-        return
-
     await websocket.send_json(
         {
             "timestamp": int(time.time() * 1000),
             "source": "chart2",
-            "line": "[chart2] commands: "
-            + "; ".join(" ".join(command) for command in detection_commands),
+            "line": f"[chart2] waiting MQTT: {_MQTT_HOST}:{_MQTT_PORT}, topic={_MQTT_TOPIC}",
         }
     )
 
-    reader = detection_chart2()
+    reader = detection_chart2_mqtt()
 
     try:
         async for payload in reader:
@@ -344,8 +425,8 @@ async def websocket_chart2(websocket: WebSocket):
                 {
                     "timestamp": payload["timestamp"],
                     "source": "chart2",
-                    "attack": payload["attack"],
-                    "model": payload["model"],
+                    "attack": payload.get("attack", ""),
+                    "model": payload.get("model", ""),
                     "line": payload["line"],
                     "data": payload["data"],
                 }
