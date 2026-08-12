@@ -227,8 +227,8 @@ def parse_detection_message(message: dict[str, Any]) -> dict | None:
     model = str(message.get("model", "")).lower()
     mode = str(message.get("mode", "")).lower()
 
-    if mode != "inference":
-        return None
+    # if mode != "inference":
+    #     return None
     if attack not in _DETECT_ATTACK or model not in _DETECT_MODEL:
         return None
 
