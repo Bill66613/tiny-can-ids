@@ -342,10 +342,18 @@ def start_normal_replay_thread(
             f"  [Normal] config — ids={[hex(x) for x in ids]}, "
             f"frames={frames_count}, interval={interval}s"
         )
-        t = threading.Thread(
-            target=generate_and_replay_synthetic_normal_can_frame,
-            args=(bus, frames_count, interval, stop_event, result_container, ids),
-        )
+        normal_path = normal_settings.get("path")
+        if normal_path:
+            frames = _parse_can_file(normal_path)
+            t = threading.Thread(
+                target=replay_can_frames,
+                args=(bus, frames, stop_event, True, result_container),
+            )
+        else:
+            t = threading.Thread(
+                target=generate_and_replay_synthetic_normal_can_frame,
+                args=(bus, frames_count, interval, stop_event, result_container, ids),
+            )
         t.start()
         return t, stop_event, result_container
 

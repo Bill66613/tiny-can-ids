@@ -8,62 +8,13 @@
         "frames": 1000,
         "frequencies": 3,
         "repeat_interval": 2
-      },
-      {
-        "id": 2,
-        "attack_type": "Fuzzy",
-        "frames": 500,
-        "frequencies": 2,
-        "repeat_interval": 3
-      },
-      {
-        "id": 3,
-        "attack_type": "Gear",
-        "frames": 2000,
-        "frequencies": 2,
-        "repeat_interval": 2
-      },
-      {
-        "id": 4,
-        "attack_type": "RPM",
-        "frames": 2000,
-        "frequencies": 2,
-        "repeat_interval": 2
-      },
-      {
-        "id": 5,
-        "attack_type": "Manual",
-        "frames": 0,
-        "path": "./DoS_dataset.csv",
-        "frequencies": 2,
-        "repeat_interval": 3
-      },
-      {
-        "id": 6,
-        "attack_type": "Manual",
-        "frames": [
-          "043F 01 45 00 00 00 00 00",
-          "043F 01 46 00 00 00 00 00",
-          "043F 01 47 00 00 00 00 00",
-          "043F 01 48 00 00 00 00 00",
-          "043F 01 49 00 00 00 00 00"
-        ],
-        "frequencies": 2,
-        "repeat_interval": 3
-      },
-      {
-        "id": 7,
-        "attack_type": "Manual",
-        "frames": 0,
-        "path": "./18820_2026_04_10_16_42_44.blf",
-        "frequencies": 2,
-        "repeat_interval": 3
       }
     ]
   },
   "normal_setting": {
     "ids": ["0x100", "0x200", "0x300", "0x400", "0x500"],
     "frames": 0,
-    "interval": 0.002
+    "interval": 0.002,
+    "path": "./18820_2026_04_10_16_42_44.blf"
   }
 }
